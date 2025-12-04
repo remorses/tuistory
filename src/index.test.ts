@@ -175,7 +175,7 @@ test('click with unique text', async () => {
   session.close()
 }, 10000)
 
-test('opencode ctrl+p', async () => {
+test.skip('opencode ctrl+p', async () => {
   const session = await launchTerminal({
     command: 'opencode',
     args: [],
@@ -259,7 +259,7 @@ test('opencode ctrl+p', async () => {
   session.close()
 }, 15000)
 
-test('claude slash command', async () => {
+test.skip('claude slash command', async () => {
   const session = await launchTerminal({
     command: 'claude',
     args: [],

@@ -153,15 +153,17 @@ export class Session {
   private async write(data: string): Promise<void> {
     this.pty.write(data)
     await new Promise((resolve) => {
-      setTimeout(resolve, 50)
+      setTimeout(resolve, 10)
     })
     return this.waitIdle()
   }
 
   async type(text: string): Promise<void> {
     for (const char of text) {
-      await this.write(char)
+      this.pty.write(char)
+      await new Promise((resolve) => setTimeout(resolve, 5))
     }
+    await new Promise((resolve) => setTimeout(resolve, 50))
   }
 
   async press(keys: Key | Key[]): Promise<void> {
