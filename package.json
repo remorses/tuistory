@@ -1,0 +1,36 @@
+{
+  "name": "tuistory",
+  "version": "0.0.1",
+  "description": "Playwright-like testing for TUI applications",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./pty": {
+      "bun": "./src/pty-bun.ts",
+      "default": "./src/pty-node.ts"
+    }
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": ["tui", "terminal", "testing", "playwright", "e2e"],
+  "author": "remorses",
+  "license": "ISC",
+  "dependencies": {
+    "@xterm/headless": "^5.5.0",
+    "@xterm/addon-serialize": "^0.13.0"
+  },
+  "optionalDependencies": {
+    "bun-pty": "*",
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.33",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "packageManager": "pnpm@10.18.1"
+}
