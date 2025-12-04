@@ -27,7 +27,7 @@
     "node-pty": "^1.0.0"
   },
   "devDependencies": {
-    "@types/node": "^22.15.33",
+    "@types/node": "^24.10.1",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   },
