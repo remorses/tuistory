@@ -179,11 +179,45 @@ test('opencode ctrl+p', async () => {
   const session = await launchTerminal({
     command: 'opencode',
     args: [],
-    cols: 80,
-    rows: 24,
+    cols: 100,
+    rows: 30,
   })
 
   await session.waitForText('opencode', { timeout: 10000 })
+
+  const initialText = await session.text()
+  expect(initialText).toMatchInlineSnapshot(`
+    "
+
+
+
+
+
+
+
+                                                                  ▄
+                                 █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█
+                                 █░░█ █░░█ █▀▀▀ █░░█ █░░░ █░░█ █░░█ █▀▀▀
+                                 ▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀  ▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀
+                                                                 1.0.132
+
+
+               ┃
+               ┃  Build anything...
+               ┃
+               ┃15Build  Anthropic Claude Opus 4.5 (latest)
+               ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                                                         tab switch agent  ctrl+p commands
+
+
+
+
+
+
+
+
+    ~/Documents/GitHub/termcast/tuistory:main  ⊙ 1 MCP /status"
+  `)
 
   await session.press(['ctrl', 'p'])
 
@@ -194,19 +228,25 @@ test('opencode ctrl+p', async () => {
 
 
 
-                                                        ▄
-                       █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█
 
-                Commands                                         esc
 
-                Search
 
-     ┃          Session
-     ┃  Buil    Open editor                                 ctrl+x e
-     ┃          Switch session                              ctrl+x l
-     ┃  Buil    New session                                 ctrl+x n
-     ╹▀▀▀▀▀▀                                                            ▀▀▀▀▀▀▀▀
-                Agent                                                   commands
+                                                                  ▄
+
+                          Commands                                         esc
+
+                          Search
+
+                          Session
+               ┃          Open editor                                 ctrl+x e
+               ┃  Buil    Switch session                              ;20;20;2
+               ┃          New session                                 ctrl+x n
+               ┃  Buil
+               ╹▀▀▀▀▀▀    Agent                                                   ▀▀▀▀▀▀▀▀
+                          Switch model                                ctrl+x m    commands
+                          Model cycle                                       f2
+                          Model cycle reverse                         shift+f2
+
 
 
 
@@ -218,3 +258,55 @@ test('opencode ctrl+p', async () => {
   await session.press(['ctrl', 'c'])
   session.close()
 }, 15000)
+
+test('claude slash command', async () => {
+  const session = await launchTerminal({
+    command: 'claude',
+    args: [],
+    cols: 100,
+    rows: 30,
+  })
+
+  await session.waitForText('claude', { timeout: 10000 })
+
+  const initialText = await session.text()
+  expect(initialText).toMatchInlineSnapshot(`
+    "
+    ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+    │                                                                                                  │
+    │ New MCP server found in .mcp.json: framer                                                        │
+    │                                                                                                  │
+    │ MCP servers may execute code or access system resources. All tool calls require approval. Learn  │
+    │ more in the MCP documentation (https://docs.claude.com/s/claude-code-mcp).                     │
+    │                                                                                                  │
+    │ ❯ 1. Use this and all future MCP servers in this project                                         │
+    │   2. Use this MCP server                                                                         │
+    │   3. Continue without using this MCP server                                                      │
+    │                                                                                                  │
+    ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+       Enter to confirm · Esc to reject"
+  `)
+
+  await session.type('/help')
+  await session.press('enter')
+
+  const helpText = await session.text()
+  expect(helpText).toMatchInlineSnapshot(`
+    "
+
+     ▐▛███▜▌   Claude Code v2.0.53
+    ▝▜█████▛▘  Opus 4.5 · Claude Max
+      ▘▘ ▝▝    ~/Documents/GitHub/termcast/tuistory
+
+     ⚠Large /Users/morse/Documents/GitHub/termcast/CLAUDE.md will impact performance (40.1k chars >
+      40.0k) • /memory to edit
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────────
+    > Try "create a util logging.py that..."
+    ────────────────────────────────────────────────────────────────────────────────────────────────────
+      ? for shortcuts                                                     Thinking off (tab to toggle)"
+  `)
+
+  await session.press(['ctrl', 'c'])
+  session.close()
+}, 20000)

@@ -1,5 +1,4 @@
-import { Terminal } from '@xterm/headless'
-import { SerializeAddon } from '@xterm/addon-serialize'
+import { PersistentTerminal, StyleFlags, type TerminalData } from 'ghostty-opentui'
 import { spawn, type IPty } from 'tuistory/pty'
 
 export interface LaunchOptions {
@@ -92,8 +91,7 @@ const CTRL_CODES: Record<string, string> = {
 
 export class Session {
   private pty: IPty
-  private term: Terminal
-  private serialize: SerializeAddon
+  private term: PersistentTerminal
   private cols: number
   private rows: number
   private idleResolvers: Array<() => void> = []
@@ -103,22 +101,10 @@ export class Session {
     this.cols = options.cols ?? 80
     this.rows = options.rows ?? 24
 
-    this.term = new Terminal({
+    this.term = new PersistentTerminal({
       cols: this.cols,
       rows: this.rows,
-      scrollback: 0,
-      allowProposedApi: true,
-      minimumContrastRatio: 1,
-      drawBoldTextInBrightColors: true,
-      allowTransparency: false,
-      theme: {
-        background: '#000000',
-        foreground: '#ffffff',
-      },
     })
-
-    this.serialize = new SerializeAddon()
-    this.term.loadAddon(this.serialize)
 
     const env = {
       ...options.env,
@@ -134,7 +120,7 @@ export class Session {
     })
 
     this.pty.onData((data) => {
-      this.term.write(data)
+      this.term.feed(data)
       clearTimeout(this.idleTimer)
       this.idleTimer = setTimeout(() => {
         const resolvers = this.idleResolvers.splice(0)
@@ -147,7 +133,7 @@ export class Session {
 
   async waitIdle(options?: { timeout?: number }): Promise<void> {
     const timeout = options?.timeout ?? 500
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<void>((resolve) => {
       if (!this.idleTimer) {
         setTimeout(() => {
           resolve()
@@ -184,7 +170,6 @@ export class Session {
     const hasCtrl = keyArray.includes('ctrl')
     const hasAlt = keyArray.includes('alt')
     const hasShift = keyArray.includes('shift')
-    const hasMeta = keyArray.includes('meta')
 
     const mainKeys = keyArray.filter(
       (k) => k !== 'ctrl' && k !== 'alt' && k !== 'shift' && k !== 'meta',
@@ -222,6 +207,72 @@ export class Session {
     }
   }
 
+  private buildTextFromJson(data: TerminalData, only?: TextOptions['only']): string {
+    const lines: string[] = []
+
+    for (const line of data.lines) {
+      let lineText = ''
+
+      for (const span of line.spans) {
+        if (only) {
+          let matches = true
+
+          if (only.bold !== undefined) {
+            const isBold = (span.flags & StyleFlags.BOLD) !== 0
+            matches = matches && isBold === only.bold
+          }
+          if (only.italic !== undefined) {
+            const isItalic = (span.flags & StyleFlags.ITALIC) !== 0
+            matches = matches && isItalic === only.italic
+          }
+          if (only.underline !== undefined) {
+            const isUnderline = (span.flags & StyleFlags.UNDERLINE) !== 0
+            matches = matches && isUnderline === only.underline
+          }
+          if (only.foreground !== undefined) {
+            matches = matches && span.fg === only.foreground
+          }
+          if (only.background !== undefined) {
+            matches = matches && span.bg === only.background
+          }
+
+          if (matches) {
+            lineText += span.text
+          } else {
+            lineText += ' '.repeat(span.width)
+          }
+        } else {
+          lineText += span.text
+        }
+      }
+
+      lines.push(lineText)
+    }
+
+    let lastNonEmpty = lines.length - 1
+    while (lastNonEmpty >= 0 && lines[lastNonEmpty].trim() === '') {
+      lastNonEmpty--
+    }
+    const trimmed = lines.slice(0, lastNonEmpty + 1)
+
+    const nonEmpty = trimmed.filter((l) => l.trim().length > 0)
+    const leadingSpaces = nonEmpty.length
+      ? Math.min(
+          ...nonEmpty.map((l) => {
+            const m = l.match(/^\s*/)
+            return m ? m[0].length : 0
+          }),
+        )
+      : 0
+
+    const deindented = trimmed.map((l) =>
+      l.length >= leadingSpaces ? l.slice(leadingSpaces) : l.trimStart(),
+    )
+
+    const rightTrimmed = deindented.map((l) => l.replace(/\s+$/, ''))
+    return '\n' + rightTrimmed.join('\n')
+  }
+
   async text(options?: TextOptions): Promise<string> {
     await new Promise((resolve) => {
       setTimeout(resolve, 10)
@@ -232,75 +283,8 @@ export class Session {
     const startTime = Date.now()
 
     const getCurrentText = (): string => {
-      const buffer = this.term.buffer.active
-      const lines: string[] = []
-
-      for (let y = 0; y < this.rows; y++) {
-        const line = buffer.getLine(y)
-        if (!line) {
-          lines.push('')
-          continue
-        }
-
-        if (options?.only) {
-          let filteredLine = ''
-          for (let x = 0; x < this.cols; x++) {
-            const cell = line.getCell(x)
-            if (!cell) {
-              filteredLine += ' '
-              continue
-            }
-
-            let matches = true
-
-            if (options.only.bold !== undefined) {
-              matches = matches && (cell.isBold() !== 0) === options.only.bold
-            }
-            if (options.only.italic !== undefined) {
-              matches = matches && (cell.isItalic() !== 0) === options.only.italic
-            }
-            if (options.only.underline !== undefined) {
-              matches = matches && (cell.isUnderline() !== 0) === options.only.underline
-            }
-            if (options.only.foreground !== undefined) {
-              const fg = this.getCellForeground(cell)
-              matches = matches && fg === options.only.foreground
-            }
-            if (options.only.background !== undefined) {
-              const bg = this.getCellBackground(cell)
-              matches = matches && bg === options.only.background
-            }
-
-            filteredLine += matches ? cell.getChars() || ' ' : ' '
-          }
-          lines.push(filteredLine)
-        } else {
-          lines.push(line.translateToString(true))
-        }
-      }
-
-      let lastNonEmpty = lines.length - 1
-      while (lastNonEmpty >= 0 && lines[lastNonEmpty].trim() === '') {
-        lastNonEmpty--
-      }
-      const trimmed = lines.slice(0, lastNonEmpty + 1)
-
-      const nonEmpty = trimmed.filter((l) => l.trim().length > 0)
-      const leadingSpaces = nonEmpty.length
-        ? Math.min(
-            ...nonEmpty.map((l) => {
-              const m = l.match(/^\s*/)
-              return m ? m[0].length : 0
-            }),
-          )
-        : 0
-
-      const deindented = trimmed.map((l) =>
-        l.length >= leadingSpaces ? l.slice(leadingSpaces) : l.trimStart(),
-      )
-
-      const rightTrimmed = deindented.map((l) => l.replace(/\s+$/, ''))
-      return '\n' + rightTrimmed.join('\n')
+      const data = this.term.getJson()
+      return this.buildTextFromJson(data, options?.only)
     }
 
     while (Date.now() - startTime < timeout) {
@@ -312,34 +296,6 @@ export class Session {
     }
 
     return getCurrentText()
-  }
-
-  private getCellForeground(cell: ReturnType<NonNullable<ReturnType<typeof this.term.buffer.active.getLine>>['getCell']>): string {
-    if (!cell) {
-      return ''
-    }
-    const fg = cell.getFgColor()
-    if (cell.isFgRGB()) {
-      const r = (fg >> 16) & 0xff
-      const g = (fg >> 8) & 0xff
-      const b = fg & 0xff
-      return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
-    }
-    return fg.toString()
-  }
-
-  private getCellBackground(cell: ReturnType<NonNullable<ReturnType<typeof this.term.buffer.active.getLine>>['getCell']>): string {
-    if (!cell) {
-      return ''
-    }
-    const bg = cell.getBgColor()
-    if (cell.isBgRGB()) {
-      const r = (bg >> 16) & 0xff
-      const g = (bg >> 8) & 0xff
-      const b = bg & 0xff
-      return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
-    }
-    return bg.toString()
   }
 
   async waitForText(
@@ -374,15 +330,23 @@ export class Session {
     while (Date.now() - startTime < timeout) {
       await this.waitIdle({ timeout: 100 })
 
-      const buffer = this.term.buffer.active
+      const data = this.term.getJson()
       const matches: Array<{ x: number; y: number; text: string }> = []
 
-      for (let y = 0; y < this.rows; y++) {
-        const line = buffer.getLine(y)?.translateToString(true) ?? ''
-        let match: RegExpExecArray | null
-        const searchRegex = new RegExp(regex.source, regex.flags.includes('g') ? regex.flags : regex.flags + 'g')
+      for (let y = 0; y < data.lines.length; y++) {
+        const line = data.lines[y]
+        let lineText = ''
+        for (const span of line.spans) {
+          lineText += span.text
+        }
 
-        while ((match = searchRegex.exec(line)) !== null) {
+        let match: RegExpExecArray | null
+        const searchRegex = new RegExp(
+          regex.source,
+          regex.flags.includes('g') ? regex.flags : regex.flags + 'g',
+        )
+
+        while ((match = searchRegex.exec(lineText)) !== null) {
           matches.push({ x: match.index, y, text: match[0] })
         }
       }
@@ -412,10 +376,6 @@ export class Session {
     await this.write(`\x1b[<0;${xPos};${yPos}m`)
   }
 
-  vt(): string {
-    return this.serialize.serialize()
-  }
-
   resize(options: { cols: number; rows: number }): void {
     this.cols = options.cols
     this.rows = options.rows
@@ -425,6 +385,6 @@ export class Session {
 
   close(): void {
     this.pty.kill()
-    this.term.dispose()
+    this.term.destroy()
   }
 }
