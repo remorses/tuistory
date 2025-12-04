@@ -216,7 +216,7 @@ test('opencode ctrl+p', async () => {
 
 
 
-    ~/Documents/GitHub/termcast/tuistory:main  ⊙ 1 MCP /status"
+    ~/Documents/GitHub/tuistory-new:main  ⊙ 1 MCP /status"
   `)
 
   await session.press(['ctrl', 'p'])
@@ -252,7 +252,7 @@ test('opencode ctrl+p', async () => {
 
 
 
-    ~/Documents/GitHub/termcast/tuistory:main  ⊙ 1 MCP /status"
+    ~/Documents/GitHub/tuistory-new:main  ⊙ 1 MCP /status"
   `)
 
   await session.press(['ctrl', 'c'])
@@ -263,7 +263,7 @@ test('claude slash command', async () => {
   const session = await launchTerminal({
     command: 'claude',
     args: [],
-    cols: 100,
+    cols: 60,
     rows: 30,
   })
 
@@ -272,18 +272,20 @@ test('claude slash command', async () => {
   const initialText = await session.text()
   expect(initialText).toMatchInlineSnapshot(`
     "
-    ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
-    │                                                                                                  │
-    │ New MCP server found in .mcp.json: framer                                                        │
-    │                                                                                                  │
-    │ MCP servers may execute code or access system resources. All tool calls require approval. Learn  │
-    │ more in the MCP documentation (https://docs.claude.com/s/claude-code-mcp).                     │
-    │                                                                                                  │
-    │ ❯ 1. Use this and all future MCP servers in this project                                         │
-    │   2. Use this MCP server                                                                         │
-    │   3. Continue without using this MCP server                                                      │
-    │                                                                                                  │
-    ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+    ╭──────────────────────────────────────────────────────────╮
+    │                                                          │
+    │ New MCP server found in .mcp.json: framer                │
+    │                                                          │
+    │ MCP servers may execute code or access system resources. │
+    │  All tool calls require approval. Learn more in the MCP  │
+    │ documentation                                            │
+    │ (https://docs.claude.com/s/claude-code-mcp).           │
+    │                                                          │
+    │ ❯ 1. Use this and all future MCP servers in this project │
+    │   2. Use this MCP server                                 │
+    │   3. Continue without using this MCP server              │
+    │                                                          │
+    ╰──────────────────────────────────────────────────────────╯
        Enter to confirm · Esc to reject"
   `)
 
@@ -293,18 +295,26 @@ test('claude slash command', async () => {
   const helpText = await session.text()
   expect(helpText).toMatchInlineSnapshot(`
     "
+    ╭─ Claude Code ────────────────────────────────────────────╮
+    │                                                          │
+    │                   Welcome back Tommy!                    │
+    │                                                          │
+    │                                                          │
+    │                          ▐▛███▜▌                         │
+    │                         ▝▜█████▛▘                        │
+    │                           ▘▘ ▝▝                          │
+    │                                                          │
+    │                                                          │
+    │                         Opus 4.5                         │
+    │                        Claude Max                        │
+    │             ~/Documents/GitHub/tuistory-new              │
+    │                                                          │
+    ╰──────────────────────────────────────────────────────────╯
 
-     ▐▛███▜▌   Claude Code v2.0.53
-    ▝▜█████▛▘  Opus 4.5 · Claude Max
-      ▘▘ ▝▝    ~/Documents/GitHub/termcast/tuistory
-
-     ⚠Large /Users/morse/Documents/GitHub/termcast/CLAUDE.md will impact performance (40.1k chars >
-      40.0k) • /memory to edit
-
-    ────────────────────────────────────────────────────────────────────────────────────────────────────
-    > Try "create a util logging.py that..."
-    ────────────────────────────────────────────────────────────────────────────────────────────────────
-      ? for shortcuts                                                     Thinking off (tab to toggle)"
+    ────────────────────────────────────────────────────────────
+    > Try "refactor pnpm-lock.yaml"
+    ────────────────────────────────────────────────────────────
+      ? for shortcuts             Thinking off (tab to toggle)"
   `)
 
   await session.press(['ctrl', 'c'])
