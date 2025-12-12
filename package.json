@@ -10,6 +10,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./src": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
     "./pty": {
       "types": "./dist/pty-node.d.ts",
       "bun": "./dist/pty-bun.js",
@@ -20,6 +24,7 @@
   "scripts": {
     "build": "tsc",
     "test": "bun test",
+    "test:node": "vitest --run",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
@@ -31,7 +36,7 @@
     "url": "https://github.com/remorses/tuistory"
   },
   "dependencies": {
-    "ghostty-opentui": "^1.3.3"
+    "ghostty-opentui": "^1.3.6"
   },
   "optionalDependencies": {
     "bun-pty": "*",
@@ -39,6 +44,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
+    "bun-types": "^1.3.4",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }

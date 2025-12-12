@@ -96,6 +96,9 @@ export class Session {
   private rows: number
   private idleResolvers: Array<() => void> = []
   private idleTimer?: ReturnType<typeof setTimeout>
+  private hasReceivedData = false
+  private dataResolvers: Array<() => void> = []
+  private closed = false
 
   constructor(options: LaunchOptions) {
     this.cols = options.cols ?? 80
@@ -107,6 +110,7 @@ export class Session {
     })
 
     const env = {
+      ...process.env,
       ...options.env,
       TERM: 'xterm-truecolor',
       COLORTERM: 'truecolor',
@@ -115,19 +119,41 @@ export class Session {
     this.pty = spawn(options.command, options.args ?? [], {
       cols: this.cols,
       rows: this.rows,
-      cwd: options.cwd,
+      cwd: options.cwd ?? process.cwd(),
       env,
     })
 
     this.pty.onData((data) => {
+      if (this.closed) return
       this.term.feed(data)
+      if (!this.hasReceivedData) {
+        this.hasReceivedData = true
+        const dataResolvers = this.dataResolvers.splice(0)
+        dataResolvers.forEach((fn) => fn())
+      }
       clearTimeout(this.idleTimer)
       this.idleTimer = setTimeout(() => {
         const resolvers = this.idleResolvers.splice(0)
         resolvers.forEach((fn) => {
           fn()
         })
-      }, 50)
+      }, 20)
+    })
+  }
+
+  async waitForData(options?: { timeout?: number }): Promise<void> {
+    if (this.hasReceivedData) {
+      return
+    }
+    const timeout = options?.timeout ?? 5000
+    return new Promise<void>((resolve, reject) => {
+      const t = setTimeout(() => {
+        reject(new Error(`waitForData timed out after ${timeout}ms - no data received from PTY`))
+      }, timeout)
+      this.dataResolvers.push(() => {
+        clearTimeout(t)
+        resolve()
+      })
     })
   }
 
@@ -135,14 +161,10 @@ export class Session {
     const timeout = options?.timeout ?? 500
     return new Promise<void>((resolve) => {
       if (!this.idleTimer) {
-        setTimeout(() => {
-          resolve()
-        }, 100)
+        setTimeout(resolve, Math.min(timeout, 20))
         return
       }
-      const t = setTimeout(() => {
-        resolve()
-      }, timeout)
+      const t = setTimeout(resolve, timeout)
       this.idleResolvers.push(() => {
         clearTimeout(t)
         resolve()
@@ -152,18 +174,15 @@ export class Session {
 
   private async write(data: string): Promise<void> {
     this.pty.write(data)
-    await new Promise((resolve) => {
-      setTimeout(resolve, 10)
-    })
     return this.waitIdle()
   }
 
   async type(text: string): Promise<void> {
     for (const char of text) {
       this.pty.write(char)
-      await new Promise((resolve) => setTimeout(resolve, 5))
+      await new Promise((resolve) => setTimeout(resolve, 1))
     }
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await this.waitIdle()
   }
 
   async press(keys: Key | Key[]): Promise<void> {
@@ -251,6 +270,10 @@ export class Session {
       lines.push(lineText)
     }
 
+    return this.cleanupText(lines)
+  }
+
+  private cleanupText(lines: string[]): string {
     let lastNonEmpty = lines.length - 1
     while (lastNonEmpty >= 0 && lines[lastNonEmpty].trim() === '') {
       lastNonEmpty--
@@ -276,11 +299,7 @@ export class Session {
   }
 
   async text(options?: TextOptions): Promise<string> {
-    await new Promise((resolve) => {
-      setTimeout(resolve, 10)
-    })
-
-    const timeout = options?.timeout ?? 5000
+    const timeout = options?.timeout ?? 1000
     const waitFor = options?.waitFor ?? ((text: string) => text.trim().length > 0)
     const startTime = Date.now()
 
@@ -290,14 +309,18 @@ export class Session {
     }
 
     while (Date.now() - startTime < timeout) {
-      await this.waitIdle({ timeout: 100 })
+      await this.waitIdle({ timeout: 15 })
       const text = getCurrentText()
       if (waitFor(text)) {
         return text
       }
     }
 
-    return getCurrentText()
+    const finalText = getCurrentText()
+    if (!waitFor(finalText)) {
+      throw new Error(`text() timed out after ${timeout}ms waiting for condition. Current terminal content:\n${finalText}`)
+    }
+    return finalText
   }
 
   async waitForText(
@@ -330,7 +353,7 @@ export class Session {
     const startTime = Date.now()
 
     while (Date.now() - startTime < timeout) {
-      await this.waitIdle({ timeout: 100 })
+      await this.waitIdle({ timeout: 15 })
 
       const data = this.term.getJson()
       const matches: Array<{ x: number; y: number; text: string }> = []
@@ -386,6 +409,7 @@ export class Session {
   }
 
   close(): void {
+    this.closed = true
     this.pty.kill()
     this.term.destroy()
   }
