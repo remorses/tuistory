@@ -405,6 +405,36 @@ export class Session {
     await this.write(`\x1b[<0;${xPos};${yPos}m`)
   }
 
+  /**
+   * Scroll up at a specific position using mouse wheel events.
+   * @param lines Number of scroll events to send (default: 1)
+   * @param x X coordinate for the scroll event (default: center of terminal)
+   * @param y Y coordinate for the scroll event (default: center of terminal)
+   */
+  async scrollUp(lines: number = 1, x?: number, y?: number): Promise<void> {
+    const xPos = (x ?? Math.floor(this.cols / 2)) + 1
+    const yPos = (y ?? Math.floor(this.rows / 2)) + 1
+    // SGR mouse scroll up: button 64 (scroll up = 4 | 64 = 64)
+    for (let i = 0; i < lines; i++) {
+      await this.write(`\x1b[<64;${xPos};${yPos}M`)
+    }
+  }
+
+  /**
+   * Scroll down at a specific position using mouse wheel events.
+   * @param lines Number of scroll events to send (default: 1)
+   * @param x X coordinate for the scroll event (default: center of terminal)
+   * @param y Y coordinate for the scroll event (default: center of terminal)
+   */
+  async scrollDown(lines: number = 1, x?: number, y?: number): Promise<void> {
+    const xPos = (x ?? Math.floor(this.cols / 2)) + 1
+    const yPos = (y ?? Math.floor(this.rows / 2)) + 1
+    // SGR mouse scroll down: button 65 (scroll down = 5 | 64 = 65)
+    for (let i = 0; i < lines; i++) {
+      await this.write(`\x1b[<65;${xPos};${yPos}M`)
+    }
+  }
+
   resize(options: { cols: number; rows: number }): void {
     this.cols = options.cols
     this.rows = options.rows
