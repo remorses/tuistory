@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.4
+
+- Fix ANSI escape sequences appearing in text output (now handled correctly by ghostty-opentui 1.3.7)
+- Remove aggressive regex workaround in `cleanupText()` that was stripping legitimate text
+- Buffer PTY data before callback registration to prevent data loss on fast-starting processes
+- Increase idle timeout to 60ms for better TUI render stabilization
+- Add `waitForDataTimeout` option to `launchTerminal()`
+- Updated ghostty-opentui to 1.3.7
+
 ## 0.0.3
 
 - Added `waitForData()` method for explicit PTY data waiting
