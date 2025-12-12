@@ -132,12 +132,16 @@ export class Session {
         dataResolvers.forEach((fn) => fn())
       }
       clearTimeout(this.idleTimer)
+      // Wait for content to stabilize after last data
+      // TUI apps do multiple writes during render, so we need to wait until
+      // no more data arrives for a period of time
       this.idleTimer = setTimeout(() => {
+        if (this.closed) return
         const resolvers = this.idleResolvers.splice(0)
         resolvers.forEach((fn) => {
           fn()
         })
-      }, 20)
+      }, 60) // Wait 60ms after last data for content to stabilize
     })
   }
 
@@ -410,6 +414,7 @@ export class Session {
 
   close(): void {
     this.closed = true
+    clearTimeout(this.idleTimer)
     this.pty.kill()
     this.term.destroy()
   }
