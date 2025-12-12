@@ -205,7 +205,7 @@ test('opencode interactions', async () => {
                ┃
                ┃  hello from tuistory
                ┃
-               ┃  30;30; Claude Opus 4.5 (latest) Anthropic
+               ┃  Build  Claude Opus 4.5 (latest) Anthropic
                ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
                                                          tab switch agent  ctrl+p commands
 
@@ -216,7 +216,7 @@ test('opencode interactions', async () => {
 
 
 
-    ~/Documents/GitHub/termcast/tuistory:main                                                1.0.147"
+    ~/Documents/GitHub/termcast/tuistory:HEAD                                                1.0.147"
   `)
 
   await session.press(['ctrl', 'x'])
@@ -234,26 +234,26 @@ test('opencode interactions', async () => {
 
 
 
-                            Select model                                     esc
+                          Select model                                     esc
 
-                            Search
+                          Search
 
-                            Recent
-                 ┃        ● Claude Opus 4.5 (latest) Anthropic
-                 ┃  hell    Claude Sonnet 4.5 (latest) Anthropic
-    [17;1H       ┃          Gemini 3 Pro Preview Google
-                 ┃  Buil    Claude Opus 4 (latest) Anthropic
-                 ╹▀▀▀▀▀▀                                                            ▀▀▀▀▀▀▀▀
-                            OpenCode Zen                                            commands
-                            Big Pickle                                      Free
-                            Grok Code Fast 1                                Free
-
-
-                            Connect provider ctrl+a  Favorite ctrl+f
+                          Recent
+               ┃        ● Claude Opus 4.5 (latest) Anthropic
+               ┃  hell    Claude Sonnet 4.5 (latest) Anthropic
+               ┃          Gemini 3 Pro Preview Google
+               ┃  Buil    Claude Opus 4 (latest) Anthropic
+               ╹▀▀▀▀▀▀                                                            ▀▀▀▀▀▀▀▀
+                          OpenCode Zen                                            commands
+                          Big Pickle                                      Free
+                          Grok Code Fast 1                                Free
 
 
-    H
-      ~/Documents/GitHub/termcast/tuistory:main                                                1.0.147"
+                          Connect provider ctrl+a  Favorite ctrl+f
+
+
+
+    ~/Documents/GitHub/termcast/tuistory:HEAD                                                1.0.147"
   `)
 
   await session.press('esc')
@@ -290,7 +290,7 @@ test('opencode interactions', async () => {
 
 
 
-    ~/Documents/GitHub/termcast/tuistory:main                                                1.0.147"
+    ~/Documents/GitHub/termcast/tuistory:HEAD  ⊙ 1 MCP /status                               1.0.147"
   `)
 
   await session.press('down')
@@ -326,7 +326,7 @@ test('opencode interactions', async () => {
 
 
 
-    ~/Documents/GitHub/termcast/tuistory:main                                                1.0.147"
+    ~/Documents/GitHub/termcast/tuistory:HEAD  ⊙ 1 MCP /status                               1.0.147"
   `)
 
   await session.press('esc')
@@ -362,7 +362,7 @@ test('opencode interactions', async () => {
 
 
 
-    ~/Documents/GitHub/termcast/tuistory:main                                                1.0.147"
+    ~/Documents/GitHub/termcast/tuistory:HEAD  ⊙ 1 MCP /status                               1.0.147"
   `)
 
   session.close()
