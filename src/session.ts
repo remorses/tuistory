@@ -24,11 +24,14 @@ export interface TextOptions {
 
 type Key =
   | 'enter'
+  | 'return'
   | 'esc'
+  | 'escape'
   | 'tab'
   | 'space'
   | 'backspace'
   | 'delete'
+  | 'insert'
   | 'up'
   | 'down'
   | 'left'
@@ -37,6 +40,20 @@ type Key =
   | 'end'
   | 'pageup'
   | 'pagedown'
+  | 'clear'
+  | 'linefeed'
+  | 'f1'
+  | 'f2'
+  | 'f3'
+  | 'f4'
+  | 'f5'
+  | 'f6'
+  | 'f7'
+  | 'f8'
+  | 'f9'
+  | 'f10'
+  | 'f11'
+  | 'f12'
   | 'ctrl'
   | 'alt'
   | 'shift'
@@ -45,11 +62,14 @@ type Key =
 
 const KEY_CODES: Record<string, string> = {
   enter: '\r',
+  return: '\r',
   esc: '\x1b',
+  escape: '\x1b',
   tab: '\t',
   space: ' ',
   backspace: '\x7f',
   delete: '\x1b[3~',
+  insert: '\x1b[2~',
   up: '\x1b[A',
   down: '\x1b[B',
   left: '\x1b[D',
@@ -58,6 +78,20 @@ const KEY_CODES: Record<string, string> = {
   end: '\x1b[F',
   pageup: '\x1b[5~',
   pagedown: '\x1b[6~',
+  clear: '\x1b[E',
+  linefeed: '\n',
+  f1: '\x1bOP',
+  f2: '\x1bOQ',
+  f3: '\x1bOR',
+  f4: '\x1bOS',
+  f5: '\x1b[15~',
+  f6: '\x1b[17~',
+  f7: '\x1b[18~',
+  f8: '\x1b[19~',
+  f9: '\x1b[20~',
+  f10: '\x1b[21~',
+  f11: '\x1b[23~',
+  f12: '\x1b[24~',
 }
 
 const CTRL_CODES: Record<string, string> = {
