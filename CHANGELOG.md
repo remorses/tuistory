@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.5
+
+- Make `press()` method type-safe with explicit `Key` type union
+- Export `Key` type for external use
+- Organized key types into `Letter`, `Digit`, `SpecialKey`, `Modifier`, `Punctuation` subtypes
+- Removed `| string` escape hatch that allowed any string
+
 ## 0.0.4
 
 - Fix ANSI escape sequences appearing in text output (now handled correctly by ghostty-opentui 1.3.7)

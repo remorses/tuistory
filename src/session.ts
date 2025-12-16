@@ -22,7 +22,14 @@ export interface TextOptions {
   timeout?: number
 }
 
-type Key =
+type Letter =
+  | 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j'
+  | 'k' | 'l' | 'm' | 'n' | 'o' | 'p' | 'q' | 'r' | 's' | 't'
+  | 'u' | 'v' | 'w' | 'x' | 'y' | 'z'
+
+type Digit = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'
+
+type SpecialKey =
   | 'enter'
   | 'return'
   | 'esc'
@@ -54,11 +61,15 @@ type Key =
   | 'f10'
   | 'f11'
   | 'f12'
-  | 'ctrl'
-  | 'alt'
-  | 'shift'
-  | 'meta'
-  | string
+
+type Modifier = 'ctrl' | 'alt' | 'shift' | 'meta'
+
+type Punctuation =
+  | '-' | '=' | '[' | ']' | '\\' | ';' | '\'' | ',' | '.' | '/'
+  | '`' | '!' | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '(' | ')'
+  | '_' | '+' | '{' | '}' | '|' | ':' | '"' | '<' | '>' | '?' | '~'
+
+export type Key = SpecialKey | Modifier | Letter | Digit | Punctuation
 
 const CSI_U_KEYCODES: Record<string, number> = {
   enter: 13,

@@ -1,4 +1,4 @@
-export { Session, type LaunchOptions, type TextOptions } from './session.js'
+export { Session, type LaunchOptions, type TextOptions, type Key } from './session.js'
 
 import { Session, type LaunchOptions } from './session.js'
 
