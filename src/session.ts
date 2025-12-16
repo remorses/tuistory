@@ -60,6 +60,15 @@ type Key =
   | 'meta'
   | string
 
+const CSI_U_KEYCODES: Record<string, number> = {
+  enter: 13,
+  return: 13,
+  tab: 9,
+  backspace: 127,
+  escape: 27,
+  esc: 27,
+}
+
 const KEY_CODES: Record<string, string> = {
   enter: '\r',
   return: '\r',
@@ -248,6 +257,12 @@ export class Session {
         } else {
           code = key
         }
+      } else if ((hasCtrl || hasAlt || hasShift) && CSI_U_KEYCODES[key]) {
+        // Use CSI u encoding for special keys with modifiers: \x1b[keycode;modifiersu
+        // Modifier = 1 + (shift ? 1 : 0) + (alt ? 2 : 0) + (ctrl ? 4 : 0)
+        const keycode = CSI_U_KEYCODES[key]
+        const modifier = 1 + (hasShift ? 1 : 0) + (hasAlt ? 2 : 0) + (hasCtrl ? 4 : 0)
+        code = `\x1b[${keycode};${modifier}u`
       } else if (KEY_CODES[key]) {
         code = KEY_CODES[key]
         if (hasAlt) {
@@ -449,9 +464,9 @@ export class Session {
     const xPos = (x ?? Math.floor(this.cols / 2)) + 1
     const yPos = (y ?? Math.floor(this.rows / 2)) + 1
     // SGR mouse scroll up: button 64 (scroll up = 4 | 64 = 64)
-    for (let i = 0; i < lines; i++) {
-      await this.write(`\x1b[<64;${xPos};${yPos}M`)
-    }
+    const scrollEvent = `\x1b[<64;${xPos};${yPos}M`
+    this.pty.write(scrollEvent.repeat(lines))
+    return this.waitIdle()
   }
 
   /**
@@ -464,9 +479,9 @@ export class Session {
     const xPos = (x ?? Math.floor(this.cols / 2)) + 1
     const yPos = (y ?? Math.floor(this.rows / 2)) + 1
     // SGR mouse scroll down: button 65 (scroll down = 5 | 64 = 65)
-    for (let i = 0; i < lines; i++) {
-      await this.write(`\x1b[<65;${xPos};${yPos}M`)
-    }
+    const scrollEvent = `\x1b[<65;${xPos};${yPos}M`
+    this.pty.write(scrollEvent.repeat(lines))
+    return this.waitIdle()
   }
 
   resize(options: { cols: number; rows: number }): void {
