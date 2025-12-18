@@ -43,9 +43,9 @@
     "node-pty": "^1.0.0"
   },
   "devDependencies": {
-    "@types/node": "^25.0.1",
-    "bun-types": "^1.3.4",
+    "@types/node": "^25.0.3",
+    "bun-types": "^1.3.5",
     "typescript": "^5.9.2",
-    "vitest": "^4.0.15"
+    "vitest": "^4.0.16"
   }
 }
