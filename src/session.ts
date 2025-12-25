@@ -20,6 +20,8 @@ export interface TextOptions {
   }
   waitFor?: (text: string) => boolean
   timeout?: number
+  /** If true, trim trailing whitespace/empty lines. Default: false */
+  trimEnd?: boolean
 }
 
 type Letter =
@@ -292,7 +294,7 @@ export class Session {
     }
   }
 
-  private buildTextFromJson(data: TerminalData, only?: TextOptions['only']): string {
+  private buildTextFromJson(data: TerminalData, only?: TextOptions['only'], trimEnd?: boolean): string {
     const lines: string[] = []
 
     for (const line of data.lines) {
@@ -334,42 +336,51 @@ export class Session {
       lines.push(lineText)
     }
 
-    return this.cleanupText(lines)
+    return this.cleanupText(lines, trimEnd)
   }
 
-  private cleanupText(lines: string[]): string {
-    let lastNonEmpty = lines.length - 1
-    while (lastNonEmpty >= 0 && lines[lastNonEmpty].trim() === '') {
-      lastNonEmpty--
-    }
-    const trimmed = lines.slice(0, lastNonEmpty + 1)
+  private cleanupText(lines: string[], trimEnd: boolean = true): string {
+    // Always trimEnd each line.
+    const linesTrimmed = lines.map((l) => l.replace(/\s+$/, ''));
 
-    const nonEmpty = trimmed.filter((l) => l.trim().length > 0)
+    if (!trimEnd) {
+      // No trimming of trailing empty lines or deindentation
+      return '\n' + linesTrimmed.join('\n');
+    }
+
+    let lastNonEmpty = linesTrimmed.length - 1;
+    while (lastNonEmpty >= 0 && linesTrimmed[lastNonEmpty].trim() === '') {
+      lastNonEmpty--;
+    }
+    const trimmed = linesTrimmed.slice(0, lastNonEmpty + 1);
+
+    const nonEmpty = trimmed.filter((l) => l.trim().length > 0);
     const leadingSpaces = nonEmpty.length
       ? Math.min(
           ...nonEmpty.map((l) => {
-            const m = l.match(/^\s*/)
-            return m ? m[0].length : 0
+            const m = l.match(/^\s*/);
+            return m ? m[0].length : 0;
           }),
         )
-      : 0
+      : 0;
 
     const deindented = trimmed.map((l) =>
       l.length >= leadingSpaces ? l.slice(leadingSpaces) : l.trimStart(),
-    )
+    );
 
-    const rightTrimmed = deindented.map((l) => l.replace(/\s+$/, ''))
-    return '\n' + rightTrimmed.join('\n')
+    return '\n' + deindented.join('\n');
   }
+
 
   async text(options?: TextOptions): Promise<string> {
     const timeout = options?.timeout ?? 1000
     const waitFor = options?.waitFor ?? ((text: string) => text.trim().length > 0)
+    const trimEnd = options?.trimEnd ?? false
     const startTime = Date.now()
 
     const getCurrentText = (): string => {
       const data = this.term.getJson()
-      return this.buildTextFromJson(data, options?.only)
+      return this.buildTextFromJson(data, options?.only, trimEnd)
     }
 
     while (Date.now() - startTime < timeout) {
