@@ -354,21 +354,7 @@ export class Session {
     }
     const trimmed = linesTrimmed.slice(0, lastNonEmpty + 1);
 
-    const nonEmpty = trimmed.filter((l) => l.trim().length > 0);
-    const leadingSpaces = nonEmpty.length
-      ? Math.min(
-          ...nonEmpty.map((l) => {
-            const m = l.match(/^\s*/);
-            return m ? m[0].length : 0;
-          }),
-        )
-      : 0;
-
-    const deindented = trimmed.map((l) =>
-      l.length >= leadingSpaces ? l.slice(leadingSpaces) : l.trimStart(),
-    );
-
-    return '\n' + deindented.join('\n');
+    return '\n' + trimmed.join('\n');
   }
 
 
