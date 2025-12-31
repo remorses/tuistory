@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.6
+
+- Pin bun-pty to version 0.4.3 for consistent builds
+
 ## 0.0.5
 
 - Make `press()` method type-safe with explicit `Key` type union
