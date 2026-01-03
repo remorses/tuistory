@@ -22,6 +22,8 @@ export interface TextOptions {
   timeout?: number
   /** If true, trim trailing whitespace/empty lines. Default: false */
   trimEnd?: boolean
+  /** If true, return text immediately without waiting for idle. Useful for capturing intermediate frames. */
+  immediate?: boolean
 }
 
 type Letter =
@@ -237,6 +239,14 @@ export class Session {
     return this.waitIdle()
   }
 
+  /**
+   * Write raw data to the PTY without waiting for idle.
+   * Useful for capturing intermediate frames during layout transitions.
+   */
+  writeRaw(data: string): void {
+    this.pty.write(data)
+  }
+
   async type(text: string): Promise<void> {
     for (const char of text) {
       this.pty.write(char)
@@ -245,7 +255,10 @@ export class Session {
     await this.waitIdle()
   }
 
-  async press(keys: Key | Key[]): Promise<void> {
+  /**
+   * Convert key(s) to their escape code representation.
+   */
+  private getKeyCode(keys: Key | Key[]): string {
     const keyArray = Array.isArray(keys) ? keys : [keys]
 
     const hasCtrl = keyArray.includes('ctrl')
@@ -257,9 +270,10 @@ export class Session {
     )
 
     if (mainKeys.length === 0) {
-      return
+      return ''
     }
 
+    const codes: string[] = []
     for (const key of mainKeys) {
       let code: string
 
@@ -290,7 +304,26 @@ export class Session {
         code = key
       }
 
+      codes.push(code)
+    }
+    return codes.join('')
+  }
+
+  async press(keys: Key | Key[]): Promise<void> {
+    const code = this.getKeyCode(keys)
+    if (code) {
       await this.write(code)
+    }
+  }
+
+  /**
+   * Send key(s) without waiting for idle. 
+   * Useful for capturing intermediate frames during layout transitions.
+   */
+  sendKey(keys: Key | Key[]): void {
+    const code = this.getKeyCode(keys)
+    if (code) {
+      this.pty.write(code)
     }
   }
 
@@ -359,15 +392,21 @@ export class Session {
 
 
   async text(options?: TextOptions): Promise<string> {
-    const timeout = options?.timeout ?? 1000
-    const waitFor = options?.waitFor ?? ((text: string) => text.trim().length > 0)
     const trimEnd = options?.trimEnd ?? false
-    const startTime = Date.now()
 
     const getCurrentText = (): string => {
       const data = this.term.getJson()
       return this.buildTextFromJson(data, options?.only, trimEnd)
     }
+
+    // If immediate, return text without waiting
+    if (options?.immediate) {
+      return getCurrentText()
+    }
+
+    const timeout = options?.timeout ?? 1000
+    const waitFor = options?.waitFor ?? ((text: string) => text.trim().length > 0)
+    const startTime = Date.now()
 
     while (Date.now() - startTime < timeout) {
       await this.waitIdle({ timeout: 15 })
@@ -398,6 +437,40 @@ export class Session {
       timeout,
       waitFor: (text) => regex.test(text),
     })
+  }
+
+  /**
+   * Capture multiple frames rapidly after sending a key.
+   * Useful for detecting layout shifts or transitions.
+   * 
+   * @param keys - Key(s) to press
+   * @param options.frameCount - Number of frames to capture (default: 5)
+   * @param options.intervalMs - Milliseconds between frame captures (default: 10)
+   * @returns Array of captured frames (text snapshots)
+   */
+  async captureFrames(
+    keys: Key | Key[],
+    options?: { frameCount?: number; intervalMs?: number },
+  ): Promise<string[]> {
+    const frameCount = options?.frameCount ?? 5
+    const intervalMs = options?.intervalMs ?? 10
+    const frames: string[] = []
+
+    // Send the key without waiting
+    this.sendKey(keys)
+
+    // Capture frames at intervals
+    for (let i = 0; i < frameCount; i++) {
+      frames.push(await this.text({ immediate: true }))
+      if (i < frameCount - 1) {
+        await new Promise((resolve) => setTimeout(resolve, intervalMs))
+      }
+    }
+
+    // Wait for idle after capturing
+    await this.waitIdle()
+
+    return frames
   }
 
   async click(
