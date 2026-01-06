@@ -39,7 +39,7 @@
     "ghostty-opentui": "^1.3.7"
   },
   "optionalDependencies": {
-    "bun-pty": "^0.4.5",
+    "bun-pty": "0.4.6",
     "node-pty": "1.0.0"
   },
   "devDependencies": {
