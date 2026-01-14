@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.7
+
+- Updated ghostty-opentui to 1.3.12 (fixes tab expansion issues)
+
 ## 0.0.6
 
 - Pin bun-pty to version 0.4.3 for consistent builds
