@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.8
+
+- Added cac-based CLI with daemon architecture for persistent sessions
+- Replaced bun-pty with Bun's built-in spawn terminal for better compatibility
+- Added CLI integration tests for launch, snapshot, type, press, wait, and close commands
+- Added Node REPL and debugger example tests
+- Updated README with comprehensive CLI examples and tips for successful automation
+- Fixed tsconfig types configuration
+
 ## 0.0.7
 
 - Updated ghostty-opentui to 1.3.12 (fixes tab expansion issues)
