@@ -1,5 +1,3 @@
-import { spawn as bunSpawn, type IPty as BunIPty } from 'bun-pty'
-
 export interface IPty {
   write(data: string): void
   resize(cols: number, rows: number): void
@@ -18,34 +16,38 @@ export function spawn(command: string, args: string[], options: SpawnOptions): I
   // Buffer to store data received before callback is registered
   const dataBuffer: string[] = []
   let dataCallback: ((data: string) => void) | null = null
+  const decoder = new TextDecoder()
 
-  const pty = bunSpawn(command, args, {
-    name: 'xterm-truecolor',
-    cols: options.cols,
-    rows: options.rows,
+  const subprocess = Bun.spawn([command, ...args], {
     cwd: options.cwd,
     env: options.env as Record<string, string>,
+    terminal: {
+      name: 'xterm-truecolor',
+      cols: options.cols,
+      rows: options.rows,
+      data(_terminal, data) {
+        const text = decoder.decode(data)
+        if (dataCallback) {
+          dataCallback(text)
+        } else {
+          // Buffer data until callback is registered
+          dataBuffer.push(text)
+        }
+      },
+    },
   })
 
-  // Register callback immediately to capture all data
-  pty.onData((data) => {
-    if (dataCallback) {
-      dataCallback(data)
-    } else {
-      // Buffer data until callback is registered
-      dataBuffer.push(data)
-    }
-  })
+  const terminal = subprocess.terminal!
 
   return {
     write(data) {
-      pty.write(data)
+      terminal.write(data)
     },
     resize(cols, rows) {
-      pty.resize(cols, rows)
+      terminal.resize(cols, rows)
     },
     kill() {
-      pty.kill()
+      subprocess.kill()
     },
     onData(callback) {
       dataCallback = callback

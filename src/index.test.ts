@@ -1,3 +1,4 @@
+/// <reference path="../node_modules/bun-types/test-globals.d.ts" />
 import { launchTerminal } from './index.js'
 
 test('echo command', async () => {
@@ -11,7 +12,16 @@ test('echo command', async () => {
   const text = await session.text()
   expect(text).toMatchInlineSnapshot(`
     "
-    hello world"
+    hello world
+
+
+
+
+
+
+
+
+    "
   `)
 
   session.close()
@@ -33,7 +43,15 @@ test('cat interactive', async () => {
   expect(text).toMatchInlineSnapshot(`
     "
     hello
-    hello"
+    hello
+
+
+
+
+
+
+
+    "
   `)
 
   await session.press(['ctrl', 'c'])
@@ -57,7 +75,14 @@ test('bash with commands', async () => {
     "
     $ echo "testing tuistory"
     testing tuistory
-    $"
+    $
+
+
+
+
+
+
+    "
   `)
 
   await session.type('exit')
@@ -82,7 +107,14 @@ test('waitForText with string', async () => {
     "
     $ echo "hello world"
     hello world
-    $"
+    $
+
+
+
+
+
+
+    "
   `)
 
   await session.type('exit')
@@ -107,7 +139,14 @@ test('waitForText with regex', async () => {
     "
     $ echo "number 42"
     number 42
-    $"
+    $
+
+
+
+
+
+
+    "
   `)
 
   await session.type('exit')
@@ -379,21 +418,36 @@ test('claude launch', async () => {
   const text = await session.waitForText(/Claude|claude/i, { timeout: 15000 })
   expect(text).toMatchInlineSnapshot(`
     "
-    ╭──────────────────────────────────────────────────────────╮
-    │                                                          │
-    │ New MCP server found in .mcp.json: framer                │
-    │                                                          │
-    │ MCP servers may execute code or access system resources. │
-    │  All tool calls require approval. Learn more in the MCP  │
-    │ documentation                                            │
-    │ (https://docs.claude.com/s/claude-code-mcp).           │
-    │                                                          │
-    │ ❯ 1. Use this and all future MCP servers in this project │
-    │   2. Use this MCP server                                 │
-    │   3. Continue without using this MCP server              │
-    │                                                          │
-    ╰──────────────────────────────────────────────────────────╯
-       Enter to confirm · Esc to reject"
+
+    ────────────────────────────────────────────────────────────
+     Do you trust the files in this folder?
+
+     /Users/morse/Documents/GitHub/termcast/tuistory
+
+     Claude Code may read, write, or execute files contained in
+      this directory. This can pose security risks, so only use
+      files and MCP servers from trusted sources.
+
+     Execution allowed by:
+
+       • .mcp.json (framer)
+
+     Learn more
+
+     ❯ 1. Yes, proceed
+       2. No, exit
+
+     Enter to confirm · Esc to cancel
+
+
+
+
+
+
+
+
+
+    "
   `)
   expect(text.toLowerCase()).toContain('claude')
 
