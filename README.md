@@ -64,40 +64,34 @@ tuistory -s claude close
 ### Debugging Node.js with tuistory
 
 ```bash
-# Create a script with a debugger statement
-echo 'const x = 42; debugger; console.log(x * 2);' > /tmp/debug.js
+# Launch Node.js debugger (assuming app.js has a debugger statement)
+tuistory launch "node inspect app.js" -s debug --cols 80
 
-# Launch Node.js debugger
-tuistory launch "node inspect /tmp/debug.js" -s debug --cols 100
-
-# Wait for debugger to start
+# Wait for debugger to start and continue to breakpoint
 tuistory -s debug wait "Break on start"
-# Output:
-# < Debugger listening on ws://127.0.0.1:9229/...
-# Break on start in /tmp/debug.js:1
-# > 1 const x = 42; debugger; console.log(x * 2);
-# debug>
-
-# Continue to breakpoint
 tuistory -s debug type "cont"
 tuistory -s debug press enter
 tuistory -s debug wait "break in"
-# Output:
-# debug> cont
-# break in /tmp/debug.js:1
-# > 1 const x = 42; debugger; console.log(x * 2);
+tuistory -s debug snapshot --trim
 
-# Enter REPL mode
-tuistory -s debug type "repl"
-tuistory -s debug press enter
-
-# Inspect variable
-tuistory -s debug type "x"
+# Print stack trace with bt (backtrace)
+tuistory -s debug type "bt"
 tuistory -s debug press enter
 tuistory -s debug snapshot --trim
 # Output:
-# > x
-# 42
+# #0 getPrice app.js:13:2
+# #1 calculateTotal app.js:7:15
+# #2 processOrder app.js:2:16
+
+# Enter REPL mode to inspect variables
+tuistory -s debug type "repl"
+tuistory -s debug press enter
+tuistory -s debug type "item"
+tuistory -s debug press enter
+tuistory -s debug snapshot --trim
+# Output:
+# > item
+# { name: 'Widget', price: 25, quantity: 2 }
 
 # Clean up
 tuistory -s debug close

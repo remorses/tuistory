@@ -39,7 +39,7 @@ describe('CLI help and version', () => {
     const { stdout, exitCode } = await runCli(['--help'])
     expect(exitCode).toBe(0)
     expect(stdout).toMatchInlineSnapshot(`
-"tuistory/0.0.7
+"tuistory/0.0.8
 
 Usage:
   $ tuistory <command> [options]
@@ -88,7 +88,7 @@ Options:
     const { stdout, exitCode } = await runCli(['launch', '--help'])
     expect(exitCode).toBe(0)
     expect(stdout).toMatchInlineSnapshot(`
-"tuistory/0.0.7
+"tuistory/0.0.8
 
 Usage:
   $ tuistory launch <command>
@@ -108,7 +108,7 @@ Options:
   test('--version shows version', async () => {
     const { stdout, exitCode } = await runCli(['--version'])
     expect(exitCode).toBe(0)
-    expect(stdout).toContain('tuistory/0.0.7')
+    expect(stdout).toMatch(/tuistory\/\d+\.\d+\.\d+/)
   })
 })
 
@@ -222,6 +222,30 @@ describe('CLI error handling', () => {
     expect(snapshot.exitCode).toBe(1)
     expect(snapshot.stderr).toContain('not found')
   })
+
+  test('press with invalid key shows error', async () => {
+    // Launch session first
+    await runCli(['launch', 'bash --norc', '-s', 'invalid-key-test'])
+
+    // Try to press invalid key
+    const press = await runCli(['press', 'invalidkey', '-s', 'invalid-key-test'])
+    expect(press.exitCode).toBe(1)
+    expect(press.stderr).toContain('Invalid key(s): invalidkey')
+    expect(press.stderr).toContain('Valid keys:')
+
+    // Clean up
+    await runCli(['close', '-s', 'invalid-key-test'])
+  }, 10000)
+
+  test('press with multiple invalid keys shows all', async () => {
+    await runCli(['launch', 'bash --norc', '-s', 'multi-invalid-test'])
+
+    const press = await runCli(['press', 'foo', 'bar', '-s', 'multi-invalid-test'])
+    expect(press.exitCode).toBe(1)
+    expect(press.stderr).toContain('Invalid key(s): foo, bar')
+
+    await runCli(['close', '-s', 'multi-invalid-test'])
+  }, 10000)
 })
 
 describe('CLI regex patterns', () => {

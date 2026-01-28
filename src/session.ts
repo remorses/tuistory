@@ -26,54 +26,51 @@ export interface TextOptions {
   immediate?: boolean
 }
 
-type Letter =
-  | 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j'
-  | 'k' | 'l' | 'm' | 'n' | 'o' | 'p' | 'q' | 'r' | 's' | 't'
-  | 'u' | 'v' | 'w' | 'x' | 'y' | 'z'
+// Define key arrays as const to derive types from them
+const LETTERS = [
+  'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
+  'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
+  'u', 'v', 'w', 'x', 'y', 'z',
+] as const
 
-type Digit = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'
+const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'] as const
 
-type SpecialKey =
-  | 'enter'
-  | 'return'
-  | 'esc'
-  | 'escape'
-  | 'tab'
-  | 'space'
-  | 'backspace'
-  | 'delete'
-  | 'insert'
-  | 'up'
-  | 'down'
-  | 'left'
-  | 'right'
-  | 'home'
-  | 'end'
-  | 'pageup'
-  | 'pagedown'
-  | 'clear'
-  | 'linefeed'
-  | 'f1'
-  | 'f2'
-  | 'f3'
-  | 'f4'
-  | 'f5'
-  | 'f6'
-  | 'f7'
-  | 'f8'
-  | 'f9'
-  | 'f10'
-  | 'f11'
-  | 'f12'
+const SPECIAL_KEYS = [
+  'enter', 'return', 'esc', 'escape', 'tab', 'space', 'backspace', 'delete',
+  'insert', 'up', 'down', 'left', 'right', 'home', 'end', 'pageup', 'pagedown',
+  'clear', 'linefeed', 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9',
+  'f10', 'f11', 'f12',
+] as const
 
-type Modifier = 'ctrl' | 'alt' | 'shift' | 'meta'
+const MODIFIERS = ['ctrl', 'alt', 'shift', 'meta'] as const
 
-type Punctuation =
-  | '-' | '=' | '[' | ']' | '\\' | ';' | '\'' | ',' | '.' | '/'
-  | '`' | '!' | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '(' | ')'
-  | '_' | '+' | '{' | '}' | '|' | ':' | '"' | '<' | '>' | '?' | '~'
+const PUNCTUATION = [
+  '-', '=', '[', ']', '\\', ';', "'", ',', '.', '/', '`',
+  '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+',
+  '{', '}', '|', ':', '"', '<', '>', '?', '~',
+] as const
+
+// Derive types from arrays
+type Letter = typeof LETTERS[number]
+type Digit = typeof DIGITS[number]
+type SpecialKey = typeof SPECIAL_KEYS[number]
+type Modifier = typeof MODIFIERS[number]
+type Punctuation = typeof PUNCTUATION[number]
 
 export type Key = SpecialKey | Modifier | Letter | Digit | Punctuation
+
+// Build VALID_KEYS set from the arrays (always in sync with types)
+export const VALID_KEYS = new Set<string>([
+  ...LETTERS,
+  ...DIGITS,
+  ...SPECIAL_KEYS,
+  ...MODIFIERS,
+  ...PUNCTUATION,
+])
+
+export function isValidKey(key: string): key is Key {
+  return VALID_KEYS.has(key.toLowerCase())
+}
 
 const CSI_U_KEYCODES: Record<string, number> = {
   enter: 13,

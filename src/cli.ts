@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { cac } from 'cac'
 import pc from 'picocolors'
-import { Session, type Key } from './session.js'
+import { Session, type Key, isValidKey, VALID_KEYS } from './session.js'
 
 // Constants
 export const RELAY_PORT = 19977
@@ -276,8 +276,14 @@ function createCliWithActions(
       }
 
       try {
-        const allKeys = [key, ...keys] as Key[]
-        await session.press(allKeys)
+        const allKeys = [key, ...keys]
+        const invalidKeys = allKeys.filter((k) => !isValidKey(k))
+        if (invalidKeys.length > 0) {
+          ctx.stderr = `Invalid key(s): ${invalidKeys.join(', ')}\nValid keys: ${Array.from(VALID_KEYS).sort().join(', ')}`
+          ctx.exitCode = 1
+          return
+        }
+        await session.press(allKeys as Key[])
         ctx.stdout = 'OK'
       } catch (e) {
         ctx.stderr = `Failed to press: ${(e as Error).message}`
@@ -480,8 +486,14 @@ function createCliWithActions(
       }
 
       try {
-        const allKeys = [key, ...keys] as Key[]
-        const frames = await session.captureFrames(allKeys, {
+        const allKeys = [key, ...keys]
+        const invalidKeys = allKeys.filter((k) => !isValidKey(k))
+        if (invalidKeys.length > 0) {
+          ctx.stderr = `Invalid key(s): ${invalidKeys.join(', ')}\nValid keys: ${Array.from(VALID_KEYS).sort().join(', ')}`
+          ctx.exitCode = 1
+          return
+        }
+        const frames = await session.captureFrames(allKeys as Key[], {
           frameCount: Number(options.count),
           intervalMs: Number(options.interval),
         })
