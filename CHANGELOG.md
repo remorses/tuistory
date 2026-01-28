@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.9
+
+- Added validation for invalid keys in `press` command with helpful error message listing valid keys
+- Refactored key types to use `as const` arrays so types and validation are always in sync
+
 ## 0.0.8
 
 - Added cac-based CLI with daemon architecture for persistent sessions
