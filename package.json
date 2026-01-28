@@ -43,6 +43,7 @@
     "cac": "^6.7.14",
     "ghostty-opentui": "workspace:*",
     "hono": "^4.11.7",
+    "kill-port-process": "^3.2.1",
     "picocolors": "^1.1.1"
   },
   "optionalDependencies": {
