@@ -297,15 +297,12 @@ describe('CLI Node.js REPL', () => {
     await runCli(['wait', '3.1416', ...s])
 
     const snapshot = await runCli(['snapshot', ...s, '--trim'])
-    expect(snapshot.stdout).toMatchInlineSnapshot(`
-"Welcome to Node.js v22.21.1.
-Type ".help" for more information.
-> 1 + 1
-2
-> Math.PI.toFixed(4)
-'3.1416'
->"
-`)
+    // Verify REPL output contains our expressions and results
+    expect(snapshot.stdout).toContain('Welcome to Node.js')
+    expect(snapshot.stdout).toContain('> 1 + 1')
+    expect(snapshot.stdout).toContain('2')
+    expect(snapshot.stdout).toContain('> Math.PI.toFixed(4)')
+    expect(snapshot.stdout).toContain("'3.1416'")
 
     // Exit REPL
     await runCli(['type', '.exit', ...s])
@@ -343,26 +340,13 @@ console.log(result);
 
       // Check we hit the debugger statement
       const breakSnapshot = await runCli(['snapshot', ...s, '--trim'])
-      expect(breakSnapshot.stdout).toMatchInlineSnapshot(`
-"< Debugger listening on ws://127.0.0.1:9229/bed09949-1934-41f7-8749-dbafd86def44
-< For help, see: https://nodejs.org/en/docs/inspector
-<
-< Debugger attached.
-<
- ok
-Break on start in /private/var/folders/8w/wvmrpgms5hngywvs8s99xnmm0000gn/T/tuistory-debug-test.js:1
-> 1 const greeting = 'hello';
-  2 const count = 42;
-  3 debugger; // breakpoint
-debug> cont
-break in /private/var/folders/8w/wvmrpgms5hngywvs8s99xnmm0000gn/T/tuistory-debug-test.js:3
-  1 const greeting = 'hello';
-  2 const count = 42;
-> 3 debugger; // breakpoint
-  4 const result = greeting + ' ' + count;
-  5 console.log(result);
-debug>"
-`)
+      // Verify debugger output (avoid machine-specific paths and UUIDs)
+      expect(breakSnapshot.stdout).toContain('Debugger listening on')
+      expect(breakSnapshot.stdout).toContain('Debugger attached')
+      expect(breakSnapshot.stdout).toContain('Break on start')
+      expect(breakSnapshot.stdout).toContain("const greeting = 'hello'")
+      expect(breakSnapshot.stdout).toContain('debug> cont')
+      expect(breakSnapshot.stdout).toContain('> 3 debugger; // breakpoint')  // current line marker
 
       // Enter REPL mode to inspect variables
       await runCli(['type', 'repl', ...s])
@@ -380,32 +364,13 @@ debug>"
       await runCli(['wait', '42', ...s])
 
       const replSnapshot = await runCli(['snapshot', ...s, '--trim'])
-      expect(replSnapshot.stdout).toMatchInlineSnapshot(`
-"< Debugger listening on ws://127.0.0.1:9229/bed09949-1934-41f7-8749-dbafd86def44
-< For help, see: https://nodejs.org/en/docs/inspector
-<
-< Debugger attached.
-<
- ok
-Break on start in /private/var/folders/8w/wvmrpgms5hngywvs8s99xnmm0000gn/T/tuistory-debug-test.js:1
-> 1 const greeting = 'hello';
-  2 const count = 42;
-  3 debugger; // breakpoint
-debug> cont
-break in /private/var/folders/8w/wvmrpgms5hngywvs8s99xnmm0000gn/T/tuistory-debug-test.js:3
-  1 const greeting = 'hello';
-  2 const count = 42;
-> 3 debugger; // breakpoint
-  4 const result = greeting + ' ' + count;
-  5 console.log(result);
-debug> repl
-Press Ctrl+C to leave debug repl
-> greeting
-'hello'
-> count
-42
->"
-`)
+      // Verify REPL mode shows variable values
+      expect(replSnapshot.stdout).toContain('debug> repl')
+      expect(replSnapshot.stdout).toContain('Press Ctrl+C to leave debug repl')
+      expect(replSnapshot.stdout).toContain('> greeting')
+      expect(replSnapshot.stdout).toContain("'hello'")
+      expect(replSnapshot.stdout).toContain('> count')
+      expect(replSnapshot.stdout).toContain('42')
 
       // Exit REPL and continue
       await runCli(['press', 'ctrl', 'c', ...s])
