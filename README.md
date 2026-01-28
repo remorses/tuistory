@@ -132,6 +132,44 @@ tuistory daemon-stop          # Stop the background daemon
 --json                # Output as JSON
 ```
 
+### Tips for Successful Automation
+
+**Run `snapshot` after every command** - Terminal applications are stateful and may show dialogs, prompts, or errors. Always check the current state:
+
+```bash
+tuistory -s mysession press enter
+tuistory -s mysession snapshot --trim  # See what happened
+```
+
+**Handle interactive dialogs** - Many CLI applications show first-run dialogs (trust prompts, terms acceptance, login screens). You need to navigate these before your automation can proceed:
+
+```bash
+# Example: Claude Code may show trust/terms dialogs on first run
+tuistory launch "claude" -s claude
+tuistory -s claude snapshot --trim          # Check current state
+tuistory -s claude press enter              # Accept dialog
+tuistory -s claude snapshot --trim          # Verify it worked
+```
+
+**Ensure applications are authenticated** - Some CLIs require login. Run authentication commands first:
+
+```bash
+tuistory -s claude type "/login"
+tuistory -s claude press enter
+tuistory -s claude snapshot --trim          # Follow login prompts
+```
+
+**Use `wait` for async operations** - Don't assume commands complete instantly:
+
+```bash
+tuistory -s mysession type "long-running-command"
+tuistory -s mysession press enter
+tuistory -s mysession wait "Done" --timeout 60000  # Wait for completion
+tuistory -s mysession snapshot --trim
+```
+
+**Debug with frequent snapshots** - When automation fails, add snapshots between each step to see where it went wrong.
+
 ## Library Usage
 
 Use tuistory programmatically in your tests or scripts:
