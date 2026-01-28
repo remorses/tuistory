@@ -5,6 +5,9 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "tuistory": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -36,7 +39,11 @@
     "url": "https://github.com/remorses/tuistory"
   },
   "dependencies": {
-    "ghostty-opentui": "workspace:*"
+    "@hono/node-server": "^1.19.9",
+    "cac": "^6.7.14",
+    "ghostty-opentui": "workspace:*",
+    "hono": "^4.11.7",
+    "picocolors": "^1.1.1"
   },
   "optionalDependencies": {
     "bun-pty": "0.4.7",
