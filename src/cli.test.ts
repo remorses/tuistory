@@ -1,5 +1,8 @@
 import { spawn } from 'bun'
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
+import fs from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
 
 const CLI_PATH = new URL('./cli.ts', import.meta.url).pathname
 
@@ -16,6 +19,9 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
 
   return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode }
 }
+
+// Helper to create session args for readability
+const session = (name: string) => ['-s', name] as const
 
 // Kill any existing daemon before tests
 beforeAll(async () => {
@@ -270,4 +276,152 @@ describe('CLI logfile', () => {
     expect(stdout).toContain('tuistory')
     expect(stdout).toContain('relay-server.log')
   })
+})
+
+describe('CLI Node.js REPL', () => {
+  test('node REPL evaluation', async () => {
+    const s = session('node-repl')
+
+    // Launch Node REPL
+    await runCli(['launch', 'node', ...s])
+    await runCli(['wait', '>', ...s, '--timeout', '5000'])
+
+    // Evaluate expression
+    await runCli(['type', '1 + 1', ...s])
+    await runCli(['press', 'enter', ...s])
+    await runCli(['wait', '2', ...s])
+
+    // Evaluate more complex expression
+    await runCli(['type', 'Math.PI.toFixed(4)', ...s])
+    await runCli(['press', 'enter', ...s])
+    await runCli(['wait', '3.1416', ...s])
+
+    const snapshot = await runCli(['snapshot', ...s, '--trim'])
+    expect(snapshot.stdout).toMatchInlineSnapshot(`
+"Welcome to Node.js v22.21.1.
+Type ".help" for more information.
+> 1 + 1
+2
+> Math.PI.toFixed(4)
+'3.1416'
+>"
+`)
+
+    // Exit REPL
+    await runCli(['type', '.exit', ...s])
+    await runCli(['press', 'enter', ...s])
+    await runCli(['close', ...s])
+  }, 15000)
+})
+
+describe('CLI Node.js Debugger', () => {
+  test('node debugger with breakpoint inspection', async () => {
+    const s = session('node-debug')
+
+    // Create a temporary script with debugger statement
+    const tmpDir = os.tmpdir()
+    const scriptPath = path.join(tmpDir, 'tuistory-debug-test.js')
+    const script = `
+const greeting = 'hello';
+const count = 42;
+debugger; // breakpoint
+const result = greeting + ' ' + count;
+console.log(result);
+`.trim()
+
+    fs.writeFileSync(scriptPath, script)
+
+    try {
+      // Launch node inspect
+      await runCli(['launch', `node inspect ${scriptPath}`, ...s, '--cols', '100', '--rows', '30'])
+      await runCli(['wait', 'Break on start', ...s, '--timeout', '10000'])
+
+      // Continue to debugger statement
+      await runCli(['type', 'cont', ...s])
+      await runCli(['press', 'enter', ...s])
+      await runCli(['wait', 'break in', ...s, '--timeout', '5000'])
+
+      // Check we hit the debugger statement
+      const breakSnapshot = await runCli(['snapshot', ...s, '--trim'])
+      expect(breakSnapshot.stdout).toMatchInlineSnapshot(`
+"< Debugger listening on ws://127.0.0.1:9229/bed09949-1934-41f7-8749-dbafd86def44
+< For help, see: https://nodejs.org/en/docs/inspector
+<
+< Debugger attached.
+<
+ ok
+Break on start in /private/var/folders/8w/wvmrpgms5hngywvs8s99xnmm0000gn/T/tuistory-debug-test.js:1
+> 1 const greeting = 'hello';
+  2 const count = 42;
+  3 debugger; // breakpoint
+debug> cont
+break in /private/var/folders/8w/wvmrpgms5hngywvs8s99xnmm0000gn/T/tuistory-debug-test.js:3
+  1 const greeting = 'hello';
+  2 const count = 42;
+> 3 debugger; // breakpoint
+  4 const result = greeting + ' ' + count;
+  5 console.log(result);
+debug>"
+`)
+
+      // Enter REPL mode to inspect variables
+      await runCli(['type', 'repl', ...s])
+      await runCli(['press', 'enter', ...s])
+      await runCli(['wait', 'Press Ctrl', ...s])
+
+      // Inspect greeting variable
+      await runCli(['type', 'greeting', ...s])
+      await runCli(['press', 'enter', ...s])
+      await runCli(['wait', 'hello', ...s])
+
+      // Inspect count variable
+      await runCli(['type', 'count', ...s])
+      await runCli(['press', 'enter', ...s])
+      await runCli(['wait', '42', ...s])
+
+      const replSnapshot = await runCli(['snapshot', ...s, '--trim'])
+      expect(replSnapshot.stdout).toMatchInlineSnapshot(`
+"< Debugger listening on ws://127.0.0.1:9229/bed09949-1934-41f7-8749-dbafd86def44
+< For help, see: https://nodejs.org/en/docs/inspector
+<
+< Debugger attached.
+<
+ ok
+Break on start in /private/var/folders/8w/wvmrpgms5hngywvs8s99xnmm0000gn/T/tuistory-debug-test.js:1
+> 1 const greeting = 'hello';
+  2 const count = 42;
+  3 debugger; // breakpoint
+debug> cont
+break in /private/var/folders/8w/wvmrpgms5hngywvs8s99xnmm0000gn/T/tuistory-debug-test.js:3
+  1 const greeting = 'hello';
+  2 const count = 42;
+> 3 debugger; // breakpoint
+  4 const result = greeting + ' ' + count;
+  5 console.log(result);
+debug> repl
+Press Ctrl+C to leave debug repl
+> greeting
+'hello'
+> count
+42
+>"
+`)
+
+      // Exit REPL and continue
+      await runCli(['press', 'ctrl', 'c', ...s])
+      await runCli(['wait', 'debug>', ...s])
+      await runCli(['type', 'cont', ...s])
+      await runCli(['press', 'enter', ...s])
+      await runCli(['wait', 'hello 42', ...s])
+
+      // Get backtrace before exit
+      const finalSnapshot = await runCli(['snapshot', ...s, '--trim'])
+      expect(finalSnapshot.stdout).toContain('hello 42')
+
+      await runCli(['close', ...s])
+    } finally {
+      // Clean up temp file
+      fs.unlinkSync(scriptPath)
+    }
+  }, 30000)
 })

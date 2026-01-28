@@ -11,10 +11,121 @@
 ## Installation
 
 ```bash
+# As a library
 bun add tuistory
+npm install tuistory
+
+# As a CLI (global)
+bun add -g tuistory
+npm install -g tuistory
+
+# Or use directly with npx/bunx
+npx tuistory --help
 ```
 
-## Usage
+## CLI Usage
+
+tuistory provides a CLI for interacting with terminal sessions from the command line or shell scripts.
+
+### Quick Start
+
+```bash
+# Launch Claude Code
+tuistory launch "claude" -s claude --cols 100 --rows 30
+
+# Wait for it to load
+tuistory -s claude wait "Claude Code" --timeout 15000
+
+# Type a message
+tuistory -s claude type "hello from tuistory"
+tuistory -s claude press enter
+
+# Get terminal snapshot
+tuistory -s claude snapshot --trim
+# Output:
+# ╭──────────────────────────────────────────────────────────────────────────────╮
+# │ Welcome to Claude Code                                                        │
+# ╰──────────────────────────────────────────────────────────────────────────────╯
+# > hello from tuistory
+
+# Close the session
+tuistory -s claude close
+```
+
+### Debugging Node.js with tuistory
+
+```bash
+# Create a script with a debugger statement
+echo 'const x = 42; debugger; console.log(x * 2);' > /tmp/debug.js
+
+# Launch Node.js debugger
+tuistory launch "node inspect /tmp/debug.js" -s debug --cols 100
+
+# Wait for debugger to start
+tuistory -s debug wait "Break on start"
+# Output:
+# < Debugger listening on ws://127.0.0.1:9229/...
+# Break on start in /tmp/debug.js:1
+# > 1 const x = 42; debugger; console.log(x * 2);
+# debug>
+
+# Continue to breakpoint
+tuistory -s debug type "cont"
+tuistory -s debug press enter
+tuistory -s debug wait "break in"
+# Output:
+# debug> cont
+# break in /tmp/debug.js:1
+# > 1 const x = 42; debugger; console.log(x * 2);
+
+# Enter REPL mode
+tuistory -s debug type "repl"
+tuistory -s debug press enter
+
+# Inspect variable
+tuistory -s debug type "x"
+tuistory -s debug press enter
+tuistory -s debug snapshot --trim
+# Output:
+# > x
+# 42
+
+# Clean up
+tuistory -s debug close
+```
+
+### CLI Commands Reference
+
+```bash
+tuistory launch <command>     # Start a terminal session
+tuistory snapshot             # Get terminal text content
+tuistory type <text>          # Type text character by character
+tuistory press <key> [keys]   # Press key(s): enter, ctrl c, alt f4
+tuistory click <pattern>      # Click on text matching pattern
+tuistory wait <pattern>       # Wait for text (supports /regex/)
+tuistory wait-idle            # Wait for terminal to stabilize
+tuistory scroll <up|down>     # Scroll the terminal
+tuistory resize <cols> <rows> # Resize terminal
+tuistory close                # Close a session
+tuistory sessions             # List active sessions
+tuistory daemon-stop          # Stop the background daemon
+```
+
+### Options
+
+```bash
+-s, --session <name>  # Session name (required for most commands)
+--cols <n>            # Terminal columns (default: 80)
+--rows <n>            # Terminal rows (default: 24)
+--env <key=value>     # Environment variable (repeatable)
+--timeout <ms>        # Wait timeout in milliseconds
+--trim                # Trim whitespace from snapshot
+--json                # Output as JSON
+```
+
+## Library Usage
+
+Use tuistory programmatically in your tests or scripts:
 
 ```ts
 import { launchTerminal } from 'tuistory'
