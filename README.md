@@ -135,6 +135,11 @@ Close the terminal session.
 session.close()
 ```
 
+## Projects using tuistory
+
+- [Termcast](https://github.com/remorses/termcast): A Raycast API re-implementation for the terminal. Turns raycast extensions into TUIs. Agents use tuistory to autonomously convert Raycast extensions into TUIs and fix any missing termcast APIs.
+- [Kimaki](https://github.com/remorses/kimaki): Kimaki can use Tuistory to control TTY processes like opencode, claude code and debuggers.
+
 ## License
 
 MIT
