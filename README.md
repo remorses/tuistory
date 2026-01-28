@@ -36,17 +36,26 @@ tuistory launch "claude" -s claude --cols 100 --rows 30
 # Wait for it to load
 tuistory -s claude wait "Claude Code" --timeout 15000
 
-# Type a message
-tuistory -s claude type "hello from tuistory"
+# Type a prompt
+tuistory -s claude type "what is 2+2? reply with just the number"
 tuistory -s claude press enter
+
+# Wait for Claude's response using regex (matches any digit)
+tuistory -s claude wait "/[0-9]+/" --timeout 30000
 
 # Get terminal snapshot
 tuistory -s claude snapshot --trim
 # Output:
-# ╭──────────────────────────────────────────────────────────────────────────────╮
-# │ Welcome to Claude Code                                                        │
-# ╰──────────────────────────────────────────────────────────────────────────────╯
-# > hello from tuistory
+# ╭─────────────────────────────────────────────────────────────────────────────────╮
+# │ ● Claude Code                                                                   │
+# ╰─────────────────────────────────────────────────────────────────────────────────╯
+#
+# > what is 2+2? reply with just the number
+#
+# 4
+#
+# ────────────────────────────────────────────────────────────────────────────────────
+# > 
 
 # Close the session
 tuistory -s claude close
