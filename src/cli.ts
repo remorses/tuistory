@@ -586,17 +586,8 @@ function compareVersions(v1: string, v2: string): number {
 // Kill relay server on port
 async function killRelay(): Promise<void> {
   try {
-    // Use lsof on unix, netstat on windows
-    const isWindows = os.platform() === 'win32'
-    if (isWindows) {
-      const { execSync } = await import('node:child_process')
-      execSync(`for /f "tokens=5" %a in ('netstat -aon ^| find ":${RELAY_PORT}"') do taskkill /F /PID %a`, { stdio: 'ignore' })
-    } else {
-      const { execSync } = await import('node:child_process')
-      execSync(`lsof -ti :${RELAY_PORT} | xargs kill 2>/dev/null || true`, { stdio: 'ignore' })
-    }
-    // Wait a bit for process to die
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    const { killPortProcess } = await import('kill-port-process')
+    await killPortProcess(RELAY_PORT)
   } catch {
     // Ignore errors
   }
@@ -679,78 +670,11 @@ async function startRelayServer() {
   console.log(`Logs: ${logger.logFilePath}`)
 }
 
-// Create a CLI for help/version display (client-side)
-function createHelpCli() {
-  const cli = cac('tuistory')
-
-  cli.command('launch <command>', 'Launch a terminal session')
-    .option('-s, --session <name>', 'Session name', { default: 'default' })
-    .option('--cols <n>', 'Terminal columns', { default: 80 })
-    .option('--rows <n>', 'Terminal rows', { default: 24 })
-    .option('--cwd <path>', 'Working directory')
-    .option('--env <key=value>', 'Environment variable (can be used multiple times)', { type: [] })
-    .option('--no-wait', "Don't wait for initial data")
-    .option('--timeout <ms>', 'Wait timeout in milliseconds', { default: 5000 })
-
-  cli.command('snapshot', 'Get terminal text content')
-    .option('-s, --session <name>', 'Session name (required)')
-    .option('--json', 'Output as JSON with metadata')
-    .option('--trim', 'Trim trailing whitespace and empty lines')
-    .option('--immediate', "Don't wait for idle state")
-    .option('--bold', 'Only bold text')
-    .option('--italic', 'Only italic text')
-    .option('--underline', 'Only underlined text')
-    .option('--fg <color>', 'Only text with foreground color')
-    .option('--bg <color>', 'Only text with background color')
-
-  cli.command('type <text>', 'Type text character by character')
-    .option('-s, --session <name>', 'Session name (required)')
-
-  cli.command('press <key> [...keys]', 'Press key(s)')
-    .option('-s, --session <name>', 'Session name (required)')
-
-  cli.command('click <pattern>', 'Click on text matching pattern')
-    .option('-s, --session <name>', 'Session name (required)')
-    .option('--first', 'Click first match if multiple found')
-    .option('--timeout <ms>', 'Timeout in milliseconds', { default: 5000 })
-
-  cli.command('click-at <x> <y>', 'Click at coordinates')
-    .option('-s, --session <name>', 'Session name (required)')
-
-  cli.command('wait <pattern>', 'Wait for text to appear')
-    .option('-s, --session <name>', 'Session name (required)')
-    .option('--timeout <ms>', 'Timeout in milliseconds', { default: 5000 })
-
-  cli.command('wait-idle', 'Wait for terminal to become idle')
-    .option('-s, --session <name>', 'Session name (required)')
-    .option('--timeout <ms>', 'Timeout in milliseconds', { default: 500 })
-
-  cli.command('scroll <direction> [lines]', 'Scroll up or down')
-    .option('-s, --session <name>', 'Session name (required)')
-    .option('--x <n>', 'X coordinate')
-    .option('--y <n>', 'Y coordinate')
-
-  cli.command('resize <cols> <rows>', 'Resize terminal')
-    .option('-s, --session <name>', 'Session name (required)')
-
-  cli.command('capture-frames <key> [...keys]', 'Capture multiple frames after keypress')
-    .option('-s, --session <name>', 'Session name (required)')
-    .option('--count <n>', 'Number of frames to capture', { default: 5 })
-    .option('--interval <ms>', 'Interval between frames in ms', { default: 10 })
-
-  cli.command('close', 'Close a session')
-    .option('-s, --session <name>', 'Session name (required)')
-
-  cli.command('sessions', 'List active sessions')
-
-  cli.command('logfile', 'Print the path to the log file')
-
-  cli.command('daemon-stop', 'Stop the relay daemon')
-
-  cli.help()
-  cli.version(VERSION)
-
-  return cli
+// Dummy logger for client-side help display
+const dummyLogger: Logger = {
+  log: async () => {},
+  error: async () => {},
+  logFilePath: LOG_FILE_PATH,
 }
 
 // Spawn a new relay server in background
@@ -769,11 +693,13 @@ function spawnRelayServer(): void {
 // CLI thin client - forwards to relay
 async function runCliClient() {
   // Handle --help and --version locally (they don't need the relay)
+  // cac handles these flags in parse() before running any action
   const hasHelp = process.argv.includes('--help') || process.argv.includes('-h')
   const hasVersion = process.argv.includes('--version') || process.argv.includes('-v')
 
   if (hasHelp || hasVersion) {
-    const cli = createHelpCli()
+    const dummyCtx: CommandResult = { stdout: '', stderr: '', exitCode: 0 }
+    const cli = createCliWithActions(dummyCtx, new Map(), dummyLogger)
     cli.parse()
     return
   }
