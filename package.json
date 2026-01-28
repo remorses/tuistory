@@ -25,7 +25,7 @@
   },
   "files": ["dist"],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && chmod +x dist/cli.js",
     "test": "bun test",
     "test:node": "vitest --run",
     "typecheck": "tsc --noEmit",
