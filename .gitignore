@@ -3,5 +3,5 @@ dist
 *.log
 .DS_Store
 bun.lockb
-.gitignore
+opensrc
 *.zip
