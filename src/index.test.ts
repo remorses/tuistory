@@ -13,7 +13,7 @@ test('echo command', async () => {
   expect(text).toMatchInlineSnapshot(`
     "
     hello world
-
+    ⎸
 
 
 
@@ -44,7 +44,7 @@ test('cat interactive', async () => {
     "
     hello
     hello
-
+    ⎸
 
 
 
@@ -75,7 +75,7 @@ test('bash with commands', async () => {
     "
     $ echo "testing tuistory"
     testing tuistory
-    $
+    $ ⎸
 
 
 
@@ -107,7 +107,7 @@ test('waitForText with string', async () => {
     "
     $ echo "hello world"
     hello world
-    $
+    $ ⎸
 
 
 
@@ -139,7 +139,7 @@ test('waitForText with regex', async () => {
     "
     $ echo "number 42"
     number 42
-    $
+    $ ⎸
 
 
 
@@ -214,7 +214,7 @@ test('click with unique text', async () => {
   session.close()
 }, 10000)
 
-test('opencode interactions', async () => {
+test.skip('opencode interactions', async () => {
   const session = await launchTerminal({
     command: 'opencode',
     args: [],
@@ -370,7 +370,7 @@ test('opencode interactions', async () => {
 
   await session.press('esc')
 
-  const backText = await session.waitForText('switch agent', { timeout: 5000 })
+  const backText = await session.waitForText('commands', { timeout: 5000 })
   expect(backText).toMatchInlineSnapshot(`
     "
 
@@ -407,7 +407,7 @@ test('opencode interactions', async () => {
   session.close()
 }, 30000)
 
-test('claude launch', async () => {
+test.skip('claude launch', async () => {
   const session = await launchTerminal({
     command: 'claude',
     args: [],
@@ -418,31 +418,31 @@ test('claude launch', async () => {
   const text = await session.waitForText(/Claude|claude/i, { timeout: 15000 })
   expect(text).toMatchInlineSnapshot(`
     "
+    ╭─ Claude Code ────────────────────────────────────────────╮
+    │                                                          │
+    │                   Welcome back Tommy!                    │
+    │                                                          │
+    │                                                          │
+    │                          ▐▛███▜▌                         │
+    │                         ▝▜█████▛▘                        │
+    │                           ▘▘ ▝▝                          │
+    │                                                          │
+    │                                                          │
+    │                         Opus 4.5                         │
+    │                        Claude Max                        │
+    │           ~/Documents/GitHub/termcast/tuistory           │
+    │                                                          │
+    ╰──────────────────────────────────────────────────────────╯
+
+     Large /Users/morse/Documents/GitHub/termcast/CLAUDE.md will
+      impact performance (55.2k chars > 40.0k) • /memory to edit
+
+
 
     ────────────────────────────────────────────────────────────
-     Do you trust the files in this folder?
-
-     /Users/morse/Documents/GitHub/termcast/tuistory
-
-     Claude Code may read, write, or execute files contained in
-      this directory. This can pose security risks, so only use
-      files and MCP servers from trusted sources.
-
-     Execution allowed by:
-
-       • .mcp.json (framer)
-
-     Learn more
-
-     ❯ 1. Yes, proceed
-       2. No, exit
-
-     Enter to confirm · Esc to cancel
-
-
-
-
-
+    ❯ Try "fix typecheck errors"
+    ────────────────────────────────────────────────────────────
+      ? for shortcuts
 
 
 

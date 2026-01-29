@@ -8,7 +8,7 @@ const CLI_PATH = new URL('./cli.ts', import.meta.url).pathname
 
 // Helper to run CLI command
 async function runCli(args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  const proc = spawn(['tsx', CLI_PATH, ...args], {
+  const proc = spawn(['bun', CLI_PATH, ...args], {
     stdout: 'pipe',
     stderr: 'pipe',
   })
@@ -39,14 +39,14 @@ describe('CLI help and version', () => {
     const { stdout, exitCode } = await runCli(['--help'])
     expect(exitCode).toBe(0)
     expect(stdout).toMatchInlineSnapshot(`
-"tuistory/0.0.8
+"tuistory/0.0.9
 
 Usage:
   $ tuistory <command> [options]
 
 Commands:
   launch <command>                Launch a terminal session
-  snapshot                        Get terminal text content
+  snapshot                        Get terminal text content (cursor shown as ⎸)
   type <text>                     Type text character by character
   press <key> [...keys]           Press key(s)
   click <pattern>                 Click on text matching pattern
@@ -88,7 +88,7 @@ Options:
     const { stdout, exitCode } = await runCli(['launch', '--help'])
     expect(exitCode).toBe(0)
     expect(stdout).toMatchInlineSnapshot(`
-"tuistory/0.0.8
+"tuistory/0.0.9
 
 Usage:
   $ tuistory launch <command>

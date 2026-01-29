@@ -26,6 +26,9 @@ export interface TextOptions {
   immediate?: boolean
 }
 
+/** Unicode character used to indicate cursor position in snapshots (U+23B8 LEFT VERTICAL BOX LINE) */
+export const CURSOR_CHAR = '⎸'
+
 // Define key arrays as const to derive types from them
 const LETTERS = [
   'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
@@ -324,10 +327,20 @@ export class Session {
     }
   }
 
-  private buildTextFromJson(data: TerminalData, only?: TextOptions['only'], trimEnd?: boolean): string {
+  private buildTextFromJson(
+    data: TerminalData, 
+    only?: TextOptions['only'], 
+    trimEnd?: boolean,
+  ): string {
     const lines: string[] = []
+    const [cursorX, cursorYScreen] = data.cursor
+    // Cursor Y is screen-relative, but lines array includes scrollback
+    // Adjust cursor Y by scrollback offset to get absolute line index
+    const scrollbackOffset = data.lines.length - data.rows
+    const cursorY = cursorYScreen + scrollbackOffset
 
-    for (const line of data.lines) {
+    for (let rowIndex = 0; rowIndex < data.lines.length; rowIndex++) {
+      const line = data.lines[rowIndex]
       let lineText = ''
 
       for (const span of line.spans) {
@@ -361,6 +374,13 @@ export class Session {
         } else {
           lineText += span.text
         }
+      }
+
+      // Replace character at cursor position with cursor indicator (only if cursor is visible)
+      if (data.cursorVisible && rowIndex === cursorY) {
+        const before = lineText.slice(0, cursorX)
+        const after = lineText.slice(cursorX + 1)
+        lineText = before + CURSOR_CHAR + after
       }
 
       lines.push(lineText)

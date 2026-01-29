@@ -172,7 +172,7 @@ function createCliWithActions(
     })
 
   cli
-    .command('snapshot', 'Get terminal text content')
+    .command('snapshot', 'Get terminal text content (cursor shown as ⎸)')
     .option('-s, --session <name>', 'Session name (required)')
     .option('--json', 'Output as JSON with metadata')
     .option('--trim', 'Trim trailing whitespace and empty lines')
@@ -692,7 +692,7 @@ const dummyLogger: Logger = {
 // Spawn a new relay server in background
 function spawnRelayServer(): void {
   const isTs = __filename.endsWith('.ts')
-  const execPath = isTs ? 'tsx' : process.execPath
+  const execPath = isTs ? 'bun' : process.execPath
 
   const serverProcess = spawn(execPath, [__filename], {
     detached: true,
