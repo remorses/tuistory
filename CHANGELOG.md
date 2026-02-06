@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.11
+
+- Fix ghostty-opentui dependency version (was incorrectly resolved to 1.3.12)
+
 ## 0.0.10
 
 - Added cursor indicator (`⎸`) to snapshot output showing cursor position
