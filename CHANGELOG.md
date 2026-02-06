@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.10
+
+- Added cursor indicator (`⎸`) to snapshot output showing cursor position
+- Only show cursor when terminal reports it as visible (DECTCEM mode)
+- Fixed cursor Y position by adjusting for scrollback offset
+- Updated ghostty-opentui to 1.3.13 (cursor scrollback fix)
+- Use bun instead of tsx for daemon spawn to fix module resolution
+
 ## 0.0.9
 
 - Added validation for invalid keys in `press` command with helpful error message listing valid keys
