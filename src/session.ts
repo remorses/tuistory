@@ -8,6 +8,8 @@ export interface LaunchOptions {
   rows?: number
   cwd?: string
   env?: Record<string, string | undefined>
+  /** If true, include cursor marker in text snapshots. Default: false */
+  showCursor?: boolean
 }
 
 export interface TextOptions {
@@ -24,10 +26,12 @@ export interface TextOptions {
   trimEnd?: boolean
   /** If true, return text immediately without waiting for idle. Useful for capturing intermediate frames. */
   immediate?: boolean
+  /** Override session-level cursor visibility for this snapshot call. */
+  showCursor?: boolean
 }
 
-/** Unicode character used to indicate cursor position in snapshots (U+23B8 LEFT VERTICAL BOX LINE) */
-export const CURSOR_CHAR = '⎸'
+/** Unicode character used to indicate cursor position in snapshots. */
+export const CURSOR_CHAR = '█'
 
 // Define key arrays as const to derive types from them
 const LETTERS = [
@@ -157,10 +161,12 @@ export class Session {
   private hasReceivedData = false
   private dataResolvers: Array<() => void> = []
   private closed = false
+  private showCursor: boolean
 
   constructor(options: LaunchOptions) {
     this.cols = options.cols ?? 80
     this.rows = options.rows ?? 24
+    this.showCursor = options.showCursor ?? false
 
     this.term = new PersistentTerminal({
       cols: this.cols,
@@ -172,6 +178,9 @@ export class Session {
       ...options.env,
       TERM: 'xterm-truecolor',
       COLORTERM: 'truecolor',
+      TERMCAST_DB_SUFFIX:
+        options.env?.TERMCAST_DB_SUFFIX ||
+        `tuistory-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     }
 
     this.pty = spawn(options.command, options.args ?? [], {
@@ -331,6 +340,7 @@ export class Session {
     data: TerminalData, 
     only?: TextOptions['only'], 
     trimEnd?: boolean,
+    includeCursor: boolean = true,
   ): string {
     const lines: string[] = []
     const [cursorX, cursorYScreen] = data.cursor
@@ -377,7 +387,7 @@ export class Session {
       }
 
       // Replace character at cursor position with cursor indicator (only if cursor is visible)
-      if (data.cursorVisible && rowIndex === cursorY) {
+      if (includeCursor && data.cursorVisible && rowIndex === cursorY) {
         const before = lineText.slice(0, cursorX)
         const after = lineText.slice(cursorX + 1)
         lineText = before + CURSOR_CHAR + after
@@ -410,10 +420,16 @@ export class Session {
 
   async text(options?: TextOptions): Promise<string> {
     const trimEnd = options?.trimEnd ?? false
+    const showCursor = options?.showCursor ?? this.showCursor
 
     const getCurrentText = (): string => {
       const data = this.term.getJson()
-      return this.buildTextFromJson(data, options?.only, trimEnd)
+      return this.buildTextFromJson(data, options?.only, trimEnd, showCursor)
+    }
+
+    const getCurrentWaitText = (): string => {
+      const data = this.term.getJson()
+      return this.buildTextFromJson(data, options?.only, trimEnd, false)
     }
 
     // If immediate, return text without waiting
@@ -423,18 +439,23 @@ export class Session {
 
     const timeout = options?.timeout ?? 1000
     const waitFor = options?.waitFor ?? ((text: string) => text.trim().length > 0)
+    const normalizeForWait = (text: string): string => {
+      return text.replaceAll(CURSOR_CHAR, '')
+    }
     const startTime = Date.now()
 
     while (Date.now() - startTime < timeout) {
       await this.waitIdle({ timeout: 15 })
       const text = getCurrentText()
-      if (waitFor(text)) {
+      const waitText = getCurrentWaitText()
+      if (waitFor(normalizeForWait(waitText))) {
         return text
       }
     }
 
     const finalText = getCurrentText()
-    if (!waitFor(finalText)) {
+    const finalWaitText = getCurrentWaitText()
+    if (!waitFor(normalizeForWait(finalWaitText))) {
       throw new Error(`text() timed out after ${timeout}ms waiting for condition. Current terminal content:\n${finalText}`)
     }
     return finalText

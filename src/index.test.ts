@@ -13,7 +13,7 @@ test('echo command', async () => {
   expect(text).toMatchInlineSnapshot(`
     "
     hello world
-    ⎸
+
 
 
 
@@ -44,7 +44,7 @@ test('cat interactive', async () => {
     "
     hello
     hello
-    ⎸
+
 
 
 
@@ -75,7 +75,7 @@ test('bash with commands', async () => {
     "
     $ echo "testing tuistory"
     testing tuistory
-    $ ⎸
+    $
 
 
 
@@ -107,7 +107,7 @@ test('waitForText with string', async () => {
     "
     $ echo "hello world"
     hello world
-    $ ⎸
+    $
 
 
 
@@ -139,7 +139,7 @@ test('waitForText with regex', async () => {
     "
     $ echo "number 42"
     number 42
-    $ ⎸
+    $
 
 
 

@@ -172,7 +172,7 @@ function createCliWithActions(
     })
 
   cli
-    .command('snapshot', 'Get terminal text content (cursor shown as ⎸)')
+    .command('snapshot', 'Get terminal text content')
     .option('-s, --session <name>', 'Session name (required)')
     .option('--json', 'Output as JSON with metadata')
     .option('--trim', 'Trim trailing whitespace and empty lines')
@@ -182,6 +182,7 @@ function createCliWithActions(
     .option('--underline', 'Only underlined text')
     .option('--fg <color>', 'Only text with foreground color')
     .option('--bg <color>', 'Only text with background color')
+    .option('--no-cursor', 'Hide cursor in snapshot output')
     .action(async (options: {
       session?: string
       json?: boolean
@@ -192,6 +193,7 @@ function createCliWithActions(
       underline?: boolean
       fg?: string
       bg?: string
+      cursor: boolean
     }) => {
       const sessionName = requireSession(options)
       if (!sessionName) {
@@ -224,6 +226,7 @@ function createCliWithActions(
         const text = await session.text({
           trimEnd: options.trim,
           immediate: options.immediate,
+          showCursor: options.cursor,
           only: Object.keys(only).length > 0 ? only as any : undefined,
         })
 

@@ -39,14 +39,14 @@ describe('CLI help and version', () => {
     const { stdout, exitCode } = await runCli(['--help'])
     expect(exitCode).toBe(0)
     expect(stdout).toMatchInlineSnapshot(`
-"tuistory/0.0.9
+"tuistory/0.0.12
 
 Usage:
   $ tuistory <command> [options]
 
 Commands:
   launch <command>                Launch a terminal session
-  snapshot                        Get terminal text content (cursor shown as ⎸)
+  snapshot                        Get terminal text content
   type <text>                     Type text character by character
   press <key> [...keys]           Press key(s)
   click <pattern>                 Click on text matching pattern
@@ -88,7 +88,7 @@ Options:
     const { stdout, exitCode } = await runCli(['launch', '--help'])
     expect(exitCode).toBe(0)
     expect(stdout).toMatchInlineSnapshot(`
-"tuistory/0.0.9
+"tuistory/0.0.12
 
 Usage:
   $ tuistory launch <command>

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.12
+
+- Add configurable cursor snapshots with `showCursor` option on `Session.text()` and `launch` options
+- Change cursor marker to `█` for clearer visual snapshots when enabled
+- Make cursor hidden by default in library snapshots and add CLI `snapshot --no-cursor` flag
+- Pin `node-pty` to `0.10.1` for more stable Node PTY behavior
+- Add isolated `TERMCAST_DB_SUFFIX` env per session to avoid shared DB collisions in parallel runs
+
 ## 0.0.11
 
 - Fix ghostty-opentui dependency version (was incorrectly resolved to 1.3.12)
