@@ -1,6 +1,6 @@
 {
   "name": "tuistory",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "description": "Playwright-like testing for TUI applications",
   "type": "module",
   "main": "./dist/index.js",

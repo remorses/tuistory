@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.13
+
+- Replaced CLI framework `cac` with `goke` for better type safety and help messages
+- Added detailed examples to all CLI commands
+- Improved help output with formatted descriptions
+
 ## 0.0.12
 
 - Add configurable cursor snapshots with `showCursor` option on `Session.text()` and `launch` options
