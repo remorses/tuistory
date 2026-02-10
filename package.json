@@ -40,13 +40,13 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.9",
-    "goke": "^6.1.3",
-    "string-dedent": "^3.0.1",
-    "zod": "^4.3.6",
     "ghostty-opentui": "^1.3.13",
+    "goke": "^6.1.3",
     "hono": "^4.11.7",
     "kill-port-process": "^3.2.1",
-    "picocolors": "^1.1.1"
+    "picocolors": "^1.1.1",
+    "string-dedent": "^3.0.1",
+    "zod": "4.3.6"
   },
   "optionalDependencies": {
     "node-pty": "0.10.1"
