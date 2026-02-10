@@ -5,7 +5,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { cac } from 'cac'
+import { goke } from 'goke'
+import { z } from 'zod'
+import dedent from 'string-dedent'
 import pc from 'picocolors'
 import { Session, type Key, isValidKey, VALID_KEYS } from './session.js'
 
@@ -92,7 +94,7 @@ function createCliWithActions(
   sessions: Map<string, Session>,
   logger: Logger,
 ) {
-  const cli = cac('tuistory')
+  const cli = goke('tuistory')
 
   // Helper to validate session exists
   const getSession = (sessionName: string): Session | null => {
@@ -116,14 +118,35 @@ function createCliWithActions(
   }
 
   cli
-    .command('launch <command>', 'Launch a terminal session')
-    .option('-s, --session <name>', 'Session name', { default: 'default' })
-    .option('--cols <n>', 'Terminal columns', { default: 80 })
-    .option('--rows <n>', 'Terminal rows', { default: 24 })
+    .command('launch <command>', dedent`
+      Launch a new terminal session with a PTY (pseudo-terminal).
+
+      Spawns the given command in a virtual terminal with configurable
+      dimensions. The command string is parsed like a shell — spaces
+      separate arguments, quotes group them.
+
+      The session runs inside a background daemon so it persists
+      across multiple tuistory invocations. Use \`-s\` to name
+      sessions for easy reference.
+
+      **Tip:** Always run \`snapshot --trim\` after launch to see
+      the initial terminal state — many apps show first-run dialogs
+      or login prompts you need to handle.
+    `)
+    .option('-s, --session <name>', z.string().default('default').describe('Session name'))
+    .option('--cols <n>', z.number().default(80).describe('Terminal columns'))
+    .option('--rows <n>', z.number().default(24).describe('Terminal rows'))
     .option('--cwd <path>', 'Working directory')
-    .option('--env <key=value>', 'Environment variable (can be used multiple times)', { type: [] })
+    .option('--env <key=value>', z.array(z.string()).describe('Environment variable (repeatable)'))
     .option('--no-wait', "Don't wait for initial data")
-    .option('--timeout <ms>', 'Wait timeout in milliseconds', { default: 5000 })
+    .option('--timeout <ms>', z.number().default(5000).describe('Wait timeout in milliseconds'))
+    .example('tuistory launch "claude" -s claude --cols 120 --rows 30')
+    .example('tuistory launch "node" -s repl --cols 80')
+    .example('tuistory launch "bash --norc" -s sh --env PS1="$ " --env FOO=bar')
+    .example(dedent`
+      # Launch and immediately check what the app shows:
+      tuistory launch "claude" -s ai && tuistory -s ai snapshot --trim
+    `)
     .action(async (command: string, options: {
       session: string
       cols: number
@@ -151,8 +174,8 @@ function createCliWithActions(
         const session = new Session({
           command: cmd,
           args,
-          cols: Number(options.cols),
-          rows: Number(options.rows),
+          cols: options.cols,
+          rows: options.rows,
           cwd: options.cwd,
           env,
         })
@@ -160,7 +183,7 @@ function createCliWithActions(
         sessions.set(options.session, session)
 
         if (options.wait) {
-          await session.waitForData({ timeout: Number(options.timeout) })
+          await session.waitForData({ timeout: options.timeout })
         }
 
         ctx.stdout = `Session "${options.session}" started`
@@ -172,7 +195,26 @@ function createCliWithActions(
     })
 
   cli
-    .command('snapshot', 'Get terminal text content')
+    .command('snapshot', dedent`
+      Capture the current terminal screen as text.
+
+      Returns the full text content of the terminal buffer.
+      By default, waits for the terminal to become idle before
+      capturing (no new data for ~60ms).
+
+      Use \`--trim\` to strip trailing whitespace and empty lines
+      for cleaner output. Use \`--json\` to get structured output
+      with session metadata.
+
+      **Style filters:** Use \`--bold\`, \`--italic\`, \`--fg\`,
+      \`--bg\` to extract only text matching specific styles.
+      Non-matching characters are replaced with spaces to
+      preserve layout.
+
+      **Best practice:** Run snapshot after every action (type,
+      press, click) to see what happened. Terminal apps are
+      stateful and may show unexpected dialogs or errors.
+    `)
     .option('-s, --session <name>', 'Session name (required)')
     .option('--json', 'Output as JSON with metadata')
     .option('--trim', 'Trim trailing whitespace and empty lines')
@@ -183,6 +225,13 @@ function createCliWithActions(
     .option('--fg <color>', 'Only text with foreground color')
     .option('--bg <color>', 'Only text with background color')
     .option('--no-cursor', 'Hide cursor in snapshot output')
+    .example('tuistory -s claude snapshot --trim')
+    .example('tuistory -s claude snapshot --json')
+    .example('tuistory -s claude snapshot --bold --trim')
+    .example(dedent`
+      # Always snapshot after an action to see the result:
+      tuistory -s app press enter && tuistory -s app snapshot --trim
+    `)
     .action(async (options: {
       session?: string
       json?: boolean
@@ -242,8 +291,23 @@ function createCliWithActions(
     })
 
   cli
-    .command('type <text>', 'Type text character by character')
+    .command('type <text>', dedent`
+      Type text into the terminal character by character.
+
+      Sends each character individually with a small delay between
+      them, simulating real user typing. This triggers per-keystroke
+      events in the target application (autocomplete, search-as-you-type,
+      input validation, etc.).
+
+      The text is sent as-is — no shell escaping or interpretation.
+      For special keys like Enter or Ctrl+C, use \`press\` instead.
+    `)
     .option('-s, --session <name>', 'Session name (required)')
+    .example('tuistory -s claude type "what is 2+2?"')
+    .example(dedent`
+      # Type a command and press enter, then snapshot:
+      tuistory -s sh type "echo hello" && tuistory -s sh press enter && tuistory -s sh snapshot --trim
+    `)
     .action(async (text: string, options: { session?: string }) => {
       const sessionName = requireSession(options)
       if (!sessionName) {
@@ -265,8 +329,31 @@ function createCliWithActions(
     })
 
   cli
-    .command('press <key> [...keys]', 'Press key(s)')
+    .command('press <key> [...keys]', dedent`
+      Press one or more keys simultaneously (key chord).
+
+      Sends a key or key combination to the terminal. Multiple keys
+      are pressed together as a chord (e.g. \`ctrl c\` sends Ctrl+C).
+
+      **Available keys:**
+      - Modifiers: ctrl, alt, shift, meta
+      - Navigation: up, down, left, right, home, end, pageup, pagedown
+      - Actions: enter, esc, tab, space, backspace, delete, insert
+      - Function: f1-f12
+      - Letters: a-z
+      - Digits: 0-9
+
+      **Note:** \`enter\` is named "return" internally but both work.
+      For typing text, use \`type\` instead.
+    `)
     .option('-s, --session <name>', 'Session name (required)')
+    .example('tuistory -s claude press enter')
+    .example('tuistory -s app press ctrl c')
+    .example('tuistory -s app press tab')
+    .example(dedent`
+      # Press enter and see the result:
+      tuistory -s claude press enter && tuistory -s claude snapshot --trim
+    `)
     .action(async (key: string, keys: string[], options: { session?: string }) => {
       const sessionName = requireSession(options)
       if (!sessionName) {
@@ -295,10 +382,29 @@ function createCliWithActions(
     })
 
   cli
-    .command('click <pattern>', 'Click on text matching pattern')
+    .command('click <pattern>', dedent`
+      Click on text matching a pattern in the terminal.
+
+      Searches the terminal screen for text matching the given
+      pattern and sends a mouse click event at its position.
+      Supports plain text and regex patterns (use /pattern/ syntax).
+
+      If multiple matches are found, the command fails unless
+      \`--first\` is passed. Use a more specific pattern or regex
+      to match exactly one element.
+
+      Waits up to \`--timeout\` ms for the pattern to appear,
+      polling the terminal contents.
+    `)
     .option('-s, --session <name>', 'Session name (required)')
     .option('--first', 'Click first match if multiple found')
-    .option('--timeout <ms>', 'Timeout in milliseconds', { default: 5000 })
+    .option('--timeout <ms>', z.number().default(5000).describe('Timeout in milliseconds'))
+    .example('tuistory -s app click "Submit"')
+    .example('tuistory -s app click "/Button \\d+/" --first')
+    .example(dedent`
+      # Click a button and see what happens:
+      tuistory -s app click "OK" && tuistory -s app snapshot --trim
+    `)
     .action(async (pattern: string, options: {
       session?: string
       first?: boolean
@@ -318,7 +424,7 @@ function createCliWithActions(
         const parsedPattern = parsePattern(pattern)
         await session.click(parsedPattern, {
           first: options.first,
-          timeout: Number(options.timeout),
+          timeout: options.timeout,
         })
         ctx.stdout = 'OK'
       } catch (e) {
@@ -328,8 +434,22 @@ function createCliWithActions(
     })
 
   cli
-    .command('click-at <x> <y>', 'Click at coordinates')
+    .command('click-at <x> <y>', dedent`
+      Click at specific terminal coordinates (column, row).
+
+      Sends a mouse click event at the given (x, y) position.
+      Coordinates are 0-based: (0, 0) is the top-left corner.
+
+      Useful when the target element doesn't have unique text
+      to match with \`click\`, or for clicking on UI chrome
+      like borders, scrollbars, or status bars.
+    `)
     .option('-s, --session <name>', 'Session name (required)')
+    .example('tuistory -s app click-at 10 5')
+    .example(dedent`
+      # Click at coordinates and snapshot:
+      tuistory -s app click-at 0 0 && tuistory -s app snapshot --trim
+    `)
     .action(async (x: string, y: string, options: { session?: string }) => {
       const sessionName = requireSession(options)
       if (!sessionName) {
@@ -351,9 +471,26 @@ function createCliWithActions(
     })
 
   cli
-    .command('wait <pattern>', 'Wait for text to appear')
+    .command('wait <pattern>', dedent`
+      Wait for text or regex pattern to appear in the terminal.
+
+      Polls the terminal content until the pattern is found or
+      timeout is reached. Useful for waiting on async operations
+      like command output, loading screens, or API responses.
+
+      Supports regex patterns with /pattern/flags syntax.
+      Plain strings are matched literally.
+
+      Returns "OK" when pattern is found, exits with error on timeout.
+    `)
     .option('-s, --session <name>', 'Session name (required)')
-    .option('--timeout <ms>', 'Timeout in milliseconds', { default: 5000 })
+    .option('--timeout <ms>', z.number().default(5000).describe('Timeout in milliseconds'))
+    .example('tuistory -s claude wait "Ready"')
+    .example('tuistory -s claude wait "/[0-9]+/" --timeout 30000')
+    .example(dedent`
+      # Wait for output then snapshot:
+      tuistory -s sh wait "Done" --timeout 60000 && tuistory -s sh snapshot --trim
+    `)
     .action(async (pattern: string, options: {
       session?: string
       timeout: number
@@ -371,7 +508,7 @@ function createCliWithActions(
       try {
         const parsedPattern = parsePattern(pattern)
         await session.waitForText(parsedPattern, {
-          timeout: Number(options.timeout),
+          timeout: options.timeout,
         })
         ctx.stdout = 'OK'
       } catch (e) {
@@ -381,9 +518,21 @@ function createCliWithActions(
     })
 
   cli
-    .command('wait-idle', 'Wait for terminal to become idle')
+    .command('wait-idle', dedent`
+      Wait for the terminal to stop receiving data (become idle).
+
+      Waits until no new data has been received for ~60ms,
+      indicating the application has finished rendering.
+
+      Useful between rapid actions to ensure the terminal has
+      settled before taking a snapshot. Most commands already
+      wait for idle internally, but this is helpful when you
+      need explicit synchronization.
+    `)
     .option('-s, --session <name>', 'Session name (required)')
-    .option('--timeout <ms>', 'Timeout in milliseconds', { default: 500 })
+    .option('--timeout <ms>', z.number().default(500).describe('Timeout in milliseconds'))
+    .example('tuistory -s app wait-idle')
+    .example('tuistory -s app wait-idle --timeout 2000')
     .action(async (options: { session?: string; timeout: number }) => {
       const sessionName = requireSession(options)
       if (!sessionName) {
@@ -396,7 +545,7 @@ function createCliWithActions(
       }
 
       try {
-        await session.waitIdle({ timeout: Number(options.timeout) })
+        await session.waitIdle({ timeout: options.timeout })
         ctx.stdout = 'OK'
       } catch (e) {
         ctx.stderr = `Failed to wait: ${(e as Error).message}`
@@ -405,10 +554,24 @@ function createCliWithActions(
     })
 
   cli
-    .command('scroll <direction> [lines]', 'Scroll up or down')
+    .command('scroll <direction> [lines]', dedent`
+      Scroll the terminal up or down using mouse wheel events.
+
+      Sends SGR mouse scroll events at the center of the terminal
+      (or at specific coordinates with --x/--y). The number of
+      scroll events can be controlled with the [lines] argument.
+
+      Direction must be "up" or "down".
+    `)
     .option('-s, --session <name>', 'Session name (required)')
-    .option('--x <n>', 'X coordinate')
-    .option('--y <n>', 'Y coordinate')
+    .option('--x <n>', 'X coordinate for scroll event')
+    .option('--y <n>', 'Y coordinate for scroll event')
+    .example('tuistory -s app scroll down 5')
+    .example('tuistory -s app scroll up 3')
+    .example(dedent`
+      # Scroll down and snapshot to see new content:
+      tuistory -s app scroll down 10 && tuistory -s app snapshot --trim
+    `)
     .action(async (direction: string, lines: string | undefined, options: {
       session?: string
       x?: string
@@ -446,8 +609,22 @@ function createCliWithActions(
     })
 
   cli
-    .command('resize <cols> <rows>', 'Resize terminal')
+    .command('resize <cols> <rows>', dedent`
+      Resize the terminal to new dimensions.
+
+      Changes the terminal width (columns) and height (rows).
+      The PTY and the virtual terminal emulator are both resized,
+      triggering a SIGWINCH signal in the running application.
+
+      Applications that handle terminal resize (like vim, htop,
+      or TUI frameworks) will re-render to fit the new size.
+    `)
     .option('-s, --session <name>', 'Session name (required)')
+    .example('tuistory -s app resize 120 40')
+    .example(dedent`
+      # Resize and snapshot to see the new layout:
+      tuistory -s app resize 200 50 && tuistory -s app snapshot --trim
+    `)
     .action(async (cols: string, rows: string, options: { session?: string }) => {
       const sessionName = requireSession(options)
       if (!sessionName) {
@@ -469,10 +646,21 @@ function createCliWithActions(
     })
 
   cli
-    .command('capture-frames <key> [...keys]', 'Capture multiple frames after keypress')
+    .command('capture-frames <key> [...keys]', dedent`
+      Capture multiple rapid terminal snapshots after a keypress.
+
+      Sends the key(s) and then captures N frames at a fixed
+      interval. Useful for detecting layout shifts, animations,
+      or transitions that happen in the frames immediately after
+      a key event.
+
+      Output is a JSON array of text snapshots.
+    `)
     .option('-s, --session <name>', 'Session name (required)')
-    .option('--count <n>', 'Number of frames to capture', { default: 5 })
-    .option('--interval <ms>', 'Interval between frames in ms', { default: 10 })
+    .option('--count <n>', z.number().default(5).describe('Number of frames to capture'))
+    .option('--interval <ms>', z.number().default(10).describe('Interval between frames in ms'))
+    .example('tuistory -s app capture-frames enter --count 10 --interval 20')
+    .example('tuistory -s app capture-frames tab --count 3')
     .action(async (key: string, keys: string[], options: {
       session?: string
       count: number
@@ -497,8 +685,8 @@ function createCliWithActions(
           return
         }
         const frames = await session.captureFrames(allKeys as Key[], {
-          frameCount: Number(options.count),
-          intervalMs: Number(options.interval),
+          frameCount: options.count,
+          intervalMs: options.interval,
         })
         ctx.stdout = JSON.stringify(frames)
       } catch (e) {
@@ -508,8 +696,14 @@ function createCliWithActions(
     })
 
   cli
-    .command('close', 'Close a session')
+    .command('close', dedent`
+      Close a terminal session and kill its process.
+
+      Terminates the PTY process and removes the session from
+      the daemon. The session name can be reused after closing.
+    `)
     .option('-s, --session <name>', 'Session name (required)')
+    .example('tuistory -s claude close')
     .action(async (options: { session?: string }) => {
       const sessionName = requireSession(options)
       if (!sessionName) {
@@ -533,7 +727,13 @@ function createCliWithActions(
     })
 
   cli
-    .command('sessions', 'List active sessions')
+    .command('sessions', dedent`
+      List all active session names.
+
+      Shows one session name per line. Sessions are created with
+      \`launch\` and persist until \`close\` or \`daemon-stop\`.
+    `)
+    .example('tuistory sessions')
     .action(() => {
       const sessionList = Array.from(sessions.keys())
       if (sessionList.length === 0) {
@@ -544,13 +744,28 @@ function createCliWithActions(
     })
 
   cli
-    .command('logfile', 'Print the path to the log file')
+    .command('logfile', dedent`
+      Print the path to the daemon log file.
+
+      The relay daemon writes logs to this file. Useful for
+      debugging when commands fail or the daemon won't start.
+    `)
+    .example('tuistory logfile')
+    .example('cat $(tuistory logfile)')
     .action(() => {
       ctx.stdout = LOG_FILE_PATH
     })
 
   cli
-    .command('daemon-stop', 'Stop the relay daemon')
+    .command('daemon-stop', dedent`
+      Stop the background relay daemon.
+
+      The daemon runs as a detached process that holds all
+      sessions in memory. Stopping it closes all active sessions.
+
+      A new daemon is started automatically on the next command.
+    `)
+    .example('tuistory daemon-stop')
     .action(async () => {
       ctx.stdout = 'Daemon stopping...'
       // Delay exit to allow HTTP response to be sent
@@ -558,6 +773,18 @@ function createCliWithActions(
         process.exit(0)
       }, 100)
     })
+
+  // Global examples showing the full workflow pattern
+  cli.example(dedent`
+    # Full workflow: launch, interact, snapshot, close
+    tuistory launch "claude" -s ai --cols 100 --rows 30
+    tuistory -s ai wait "Claude" --timeout 15000
+    tuistory -s ai type "what is 2+2?"
+    tuistory -s ai press enter
+    tuistory -s ai wait "/[0-9]+/" --timeout 30000
+    tuistory -s ai snapshot --trim
+    tuistory -s ai close
+  `)
 
   cli.help()
   cli.version(VERSION)
@@ -708,7 +935,7 @@ function spawnRelayServer(): void {
 // CLI thin client - forwards to relay
 async function runCliClient() {
   // Handle --help and --version locally (they don't need the relay)
-  // cac handles these flags in parse() before running any action
+  // goke handles these flags in parse() before running any action
   const hasHelp = process.argv.includes('--help') || process.argv.includes('-h')
   const hasVersion = process.argv.includes('--version') || process.argv.includes('-v')
 

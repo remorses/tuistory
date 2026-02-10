@@ -45,42 +45,204 @@ Usage:
   $ tuistory <command> [options]
 
 Commands:
-  launch <command>                Launch a terminal session
-  snapshot                        Get terminal text content
-  type <text>                     Type text character by character
-  press <key> [...keys]           Press key(s)
-  click <pattern>                 Click on text matching pattern
-  click-at <x> <y>                Click at coordinates
-  wait <pattern>                  Wait for text to appear
-  wait-idle                       Wait for terminal to become idle
-  scroll <direction> [lines]      Scroll up or down
-  resize <cols> <rows>            Resize terminal
-  capture-frames <key> [...keys]  Capture multiple frames after keypress
-  close                           Close a session
-  sessions                        List active sessions
-  logfile                         Print the path to the log file
-  daemon-stop                     Stop the relay daemon
+  launch <command>                Launch a new terminal session with a PTY (pseudo-terminal).
+                                  
+                                  Spawns the given command in a virtual terminal with configurable
+                                  dimensions. The command string is parsed like a shell — spaces
+                                  separate arguments, quotes group them.
+                                  
+                                  The session runs inside a background daemon so it persists
+                                  across multiple tuistory invocations. Use \`-s\` to name
+                                  sessions for easy reference.
+                                  
+                                  **Tip:** Always run \`snapshot --trim\` after launch to see
+                                  the initial terminal state — many apps show first-run dialogs
+                                  or login prompts you need to handle.
+    -s, --session <name>          Session name (default: default)
+    --cols <n>                    Terminal columns (default: 80)
+    --rows <n>                    Terminal rows (default: 24)
+    --cwd <path>                  Working directory
+    --env <key=value>             Environment variable (repeatable)
+    --no-wait                     Don't wait for initial data
+    --timeout <ms>                Wait timeout in milliseconds (default: 5000)
 
-For more info, run any command with the \`--help\` flag:
-  $ tuistory launch --help
-  $ tuistory snapshot --help
-  $ tuistory type --help
-  $ tuistory press --help
-  $ tuistory click --help
-  $ tuistory click-at --help
-  $ tuistory wait --help
-  $ tuistory wait-idle --help
-  $ tuistory scroll --help
-  $ tuistory resize --help
-  $ tuistory capture-frames --help
-  $ tuistory close --help
-  $ tuistory sessions --help
-  $ tuistory logfile --help
-  $ tuistory daemon-stop --help
+  snapshot                        Capture the current terminal screen as text.
+                                  
+                                  Returns the full text content of the terminal buffer.
+                                  By default, waits for the terminal to become idle before
+                                  capturing (no new data for ~60ms).
+                                  
+                                  Use \`--trim\` to strip trailing whitespace and empty lines
+                                  for cleaner output. Use \`--json\` to get structured output
+                                  with session metadata.
+                                  
+                                  **Style filters:** Use \`--bold\`, \`--italic\`, \`--fg\`,
+                                  \`--bg\` to extract only text matching specific styles.
+                                  Non-matching characters are replaced with spaces to
+                                  preserve layout.
+                                  
+                                  **Best practice:** Run snapshot after every action (type,
+                                  press, click) to see what happened. Terminal apps are
+                                  stateful and may show unexpected dialogs or errors.
+    -s, --session <name>          Session name (required)
+    --json                        Output as JSON with metadata
+    --trim                        Trim trailing whitespace and empty lines
+    --immediate                   Don't wait for idle state
+    --bold                        Only bold text
+    --italic                      Only italic text
+    --underline                   Only underlined text
+    --fg <color>                  Only text with foreground color
+    --bg <color>                  Only text with background color
+    --no-cursor                   Hide cursor in snapshot output
+
+  type <text>                     Type text into the terminal character by character.
+                                  
+                                  Sends each character individually with a small delay between
+                                  them, simulating real user typing. This triggers per-keystroke
+                                  events in the target application (autocomplete, search-as-you-type,
+                                  input validation, etc.).
+                                  
+                                  The text is sent as-is — no shell escaping or interpretation.
+                                  For special keys like Enter or Ctrl+C, use \`press\` instead.
+    -s, --session <name>          Session name (required)
+
+  press <key> [...keys]           Press one or more keys simultaneously (key chord).
+                                  
+                                  Sends a key or key combination to the terminal. Multiple keys
+                                  are pressed together as a chord (e.g. \`ctrl c\` sends Ctrl+C).
+                                  
+                                  **Available keys:**
+                                  - Modifiers: ctrl, alt, shift, meta
+                                  - Navigation: up, down, left, right, home, end, pageup, pagedown
+                                  - Actions: enter, esc, tab, space, backspace, delete, insert
+                                  - Function: f1-f12
+                                  - Letters: a-z
+                                  - Digits: 0-9
+                                  
+                                  **Note:** \`enter\` is named "return" internally but both work.
+                                  For typing text, use \`type\` instead.
+    -s, --session <name>          Session name (required)
+
+  click <pattern>                 Click on text matching a pattern in the terminal.
+                                  
+                                  Searches the terminal screen for text matching the given
+                                  pattern and sends a mouse click event at its position.
+                                  Supports plain text and regex patterns (use /pattern/ syntax).
+                                  
+                                  If multiple matches are found, the command fails unless
+                                  \`--first\` is passed. Use a more specific pattern or regex
+                                  to match exactly one element.
+                                  
+                                  Waits up to \`--timeout\` ms for the pattern to appear,
+                                  polling the terminal contents.
+    -s, --session <name>          Session name (required)
+    --first                       Click first match if multiple found
+    --timeout <ms>                Timeout in milliseconds (default: 5000)
+
+  click-at <x> <y>                Click at specific terminal coordinates (column, row).
+                                  
+                                  Sends a mouse click event at the given (x, y) position.
+                                  Coordinates are 0-based: (0, 0) is the top-left corner.
+                                  
+                                  Useful when the target element doesn't have unique text
+                                  to match with \`click\`, or for clicking on UI chrome
+                                  like borders, scrollbars, or status bars.
+    -s, --session <name>          Session name (required)
+
+  wait <pattern>                  Wait for text or regex pattern to appear in the terminal.
+                                  
+                                  Polls the terminal content until the pattern is found or
+                                  timeout is reached. Useful for waiting on async operations
+                                  like command output, loading screens, or API responses.
+                                  
+                                  Supports regex patterns with /pattern/flags syntax.
+                                  Plain strings are matched literally.
+                                  
+                                  Returns "OK" when pattern is found, exits with error on timeout.
+    -s, --session <name>          Session name (required)
+    --timeout <ms>                Timeout in milliseconds (default: 5000)
+
+  wait-idle                       Wait for the terminal to stop receiving data (become idle).
+                                  
+                                  Waits until no new data has been received for ~60ms,
+                                  indicating the application has finished rendering.
+                                  
+                                  Useful between rapid actions to ensure the terminal has
+                                  settled before taking a snapshot. Most commands already
+                                  wait for idle internally, but this is helpful when you
+                                  need explicit synchronization.
+    -s, --session <name>          Session name (required)
+    --timeout <ms>                Timeout in milliseconds (default: 500)
+
+  scroll <direction> [lines]      Scroll the terminal up or down using mouse wheel events.
+                                  
+                                  Sends SGR mouse scroll events at the center of the terminal
+                                  (or at specific coordinates with --x/--y). The number of
+                                  scroll events can be controlled with the [lines] argument.
+                                  
+                                  Direction must be "up" or "down".
+    -s, --session <name>          Session name (required)
+    --x <n>                       X coordinate for scroll event
+    --y <n>                       Y coordinate for scroll event
+
+  resize <cols> <rows>            Resize the terminal to new dimensions.
+                                  
+                                  Changes the terminal width (columns) and height (rows).
+                                  The PTY and the virtual terminal emulator are both resized,
+                                  triggering a SIGWINCH signal in the running application.
+                                  
+                                  Applications that handle terminal resize (like vim, htop,
+                                  or TUI frameworks) will re-render to fit the new size.
+    -s, --session <name>          Session name (required)
+
+  capture-frames <key> [...keys]  Capture multiple rapid terminal snapshots after a keypress.
+                                  
+                                  Sends the key(s) and then captures N frames at a fixed
+                                  interval. Useful for detecting layout shifts, animations,
+                                  or transitions that happen in the frames immediately after
+                                  a key event.
+                                  
+                                  Output is a JSON array of text snapshots.
+    -s, --session <name>          Session name (required)
+    --count <n>                   Number of frames to capture (default: 5)
+    --interval <ms>               Interval between frames in ms (default: 10)
+
+  close                           Close a terminal session and kill its process.
+                                  
+                                  Terminates the PTY process and removes the session from
+                                  the daemon. The session name can be reused after closing.
+    -s, --session <name>          Session name (required)
+
+  sessions                        List all active session names.
+                                  
+                                  Shows one session name per line. Sessions are created with
+                                  \`launch\` and persist until \`close\` or \`daemon-stop\`.
+
+  logfile                         Print the path to the daemon log file.
+                                  
+                                  The relay daemon writes logs to this file. Useful for
+                                  debugging when commands fail or the daemon won't start.
+
+  daemon-stop                     Stop the background relay daemon.
+                                  
+                                  The daemon runs as a detached process that holds all
+                                  sessions in memory. Stopping it closes all active sessions.
+                                  
+                                  A new daemon is started automatically on the next command.
 
 Options:
-  -h, --help     Display this message 
-  -v, --version  Display version number"
+  -h, --help     Display this message
+  -v, --version  Display version number
+
+Examples:
+# Full workflow: launch, interact, snapshot, close
+tuistory launch "claude" -s ai --cols 100 --rows 30
+tuistory -s ai wait "Claude" --timeout 15000
+tuistory -s ai type "what is 2+2?"
+tuistory -s ai press enter
+tuistory -s ai wait "/[0-9]+/" --timeout 30000
+tuistory -s ai snapshot --trim
+tuistory -s ai close"
 `)
   })
 
@@ -97,11 +259,33 @@ Options:
   -s, --session <name>  Session name (default: default)
   --cols <n>            Terminal columns (default: 80)
   --rows <n>            Terminal rows (default: 24)
-  --cwd <path>          Working directory 
-  --env <key=value>     Environment variable (can be used multiple times) 
-  --no-wait             Don't wait for initial data (default: true)
+  --cwd <path>          Working directory
+  --env <key=value>     Environment variable (repeatable)
+  --no-wait             Don't wait for initial data
   --timeout <ms>        Wait timeout in milliseconds (default: 5000)
-  -h, --help            Display this message"
+  -h, --help            Display this message
+
+Description:
+  Launch a new terminal session with a PTY (pseudo-terminal).
+
+  Spawns the given command in a virtual terminal with configurable
+  dimensions. The command string is parsed like a shell — spaces
+  separate arguments, quotes group them.
+
+  The session runs inside a background daemon so it persists
+  across multiple tuistory invocations. Use \`-s\` to name
+  sessions for easy reference.
+
+  **Tip:** Always run \`snapshot --trim\` after launch to see
+  the initial terminal state — many apps show first-run dialogs
+  or login prompts you need to handle.
+
+Examples:
+tuistory launch "claude" -s claude --cols 120 --rows 30
+tuistory launch "node" -s repl --cols 80
+tuistory launch "bash --norc" -s sh --env PS1="$ " --env FOO=bar
+# Launch and immediately check what the app shows:
+tuistory launch "claude" -s ai && tuistory -s ai snapshot --trim"
 `)
   })
 
