@@ -422,14 +422,26 @@ export class Session {
     const trimEnd = options?.trimEnd ?? false
     const showCursor = options?.showCursor ?? this.showCursor
 
+    const stripHiddenCursorStyling = (text: string): string => {
+      // Some renderers encode the cursor as reverse-video SGR sequences in the
+      // captured text stream. When snapshots are taken with showCursor=false
+      // (default), strip these to avoid flakey diffs.
+      if (showCursor) return text
+      return text.replaceAll('\x1b[7m', '').replaceAll('\x1b[27m', '')
+    }
+
     const getCurrentText = (): string => {
       const data = this.term.getJson()
-      return this.buildTextFromJson(data, options?.only, trimEnd, showCursor)
+      return stripHiddenCursorStyling(
+        this.buildTextFromJson(data, options?.only, trimEnd, showCursor),
+      )
     }
 
     const getCurrentWaitText = (): string => {
       const data = this.term.getJson()
-      return this.buildTextFromJson(data, options?.only, trimEnd, false)
+      return stripHiddenCursorStyling(
+        this.buildTextFromJson(data, options?.only, trimEnd, false),
+      )
     }
 
     // If immediate, return text without waiting
@@ -449,7 +461,10 @@ export class Session {
       const text = getCurrentText()
       const waitText = getCurrentWaitText()
       if (waitFor(normalizeForWait(waitText))) {
-        return text
+        // Give the renderer one more idle cycle to settle.
+        // Many UIs paint the main content first and footer/overlays right after.
+        await this.waitIdle({ timeout: 15 })
+        return getCurrentText()
       }
     }
 
