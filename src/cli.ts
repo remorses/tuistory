@@ -291,6 +291,94 @@ function createCliWithActions(
     })
 
   cli
+    .command('screenshot', dedent`
+      Capture the terminal screen as an image file (JPEG/PNG/WebP).
+
+      Renders the current terminal buffer to a colored image with
+      JetBrains Mono Nerd font on a fixed-width character grid.
+      Outputs the image file path to stdout.
+
+      **For AI agents and bots:** Use this to screenshot terminal
+      TUI applications and share them with users via messaging
+      apps. Bots like kimaki or openclaw can show users live
+      progress of terminal commands by uploading the image.
+
+      Using tuistory is preferable over tmux background sessions
+      because you can programmatically control the terminal (type,
+      press keys, wait for text, resize) and capture pixel-perfect
+      screenshots — designed from first principles for agents.
+
+      Waits for the terminal to become idle before capturing unless
+      \`--immediate\` is passed.
+    `)
+    .option('-s, --session <name>', 'Session name (required)')
+    .option('-o, --output <path>', 'Output file path (default: temp file)')
+    .option('--width <px>', z.number().describe('Image width in pixels (auto from cols)'))
+    .option('--font-size <px>', z.number().default(14).describe('Font size in pixels'))
+    .option('--line-height <n>', z.number().default(1.5).describe('Line height multiplier'))
+    .option('--background <color>', z.string().default('#1a1b26').describe('Background color'))
+    .option('--foreground <color>', z.string().default('#c0caf5').describe('Text color'))
+    .option('--format <fmt>', z.enum(['jpeg', 'png', 'webp']).default('jpeg').describe('Image format'))
+    .option('--quality <n>', z.number().default(90).describe('Quality for lossy formats (0-100)'))
+    .option('--immediate', "Don't wait for idle state")
+    .example('tuistory -s claude screenshot -o screenshot.jpg')
+    .example('tuistory -s claude screenshot --format png --font-size 20')
+    .example('tuistory -s claude screenshot --background "#ffffff" --foreground "#24292e"')
+    .action(async (options: {
+      session?: string
+      output?: string
+      width?: number
+      fontSize: number
+      lineHeight: number
+      background: string
+      foreground: string
+      format: 'jpeg' | 'png' | 'webp'
+      quality: number
+      immediate?: boolean
+    }) => {
+      const sessionName = requireSession(options)
+      if (!sessionName) return
+
+      const session = getSession(sessionName)
+      if (!session) return
+
+      try {
+        // Wait for idle unless --immediate
+        if (!options.immediate) {
+          await session.text({ immediate: false, timeout: 2000 })
+        }
+
+        const data = session.getTerminalData()
+
+        const { renderTerminalToImage } = await import('ghostty-opentui/image')
+
+        const image = await renderTerminalToImage(data, {
+          width: options.width,
+          fontSize: options.fontSize,
+          lineHeight: options.lineHeight,
+          theme: {
+            background: options.background,
+            text: options.foreground,
+          },
+          format: options.format,
+          quality: options.quality,
+        })
+
+        const { writeFileSync } = await import('fs')
+        const outputPath = options.output ?? (await import('path')).join(
+          (await import('os')).tmpdir(),
+          `tuistory-screenshot-${Date.now()}.${options.format}`,
+        )
+
+        writeFileSync(outputPath, image)
+        ctx.stdout = outputPath
+      } catch (e) {
+        ctx.stderr = `Failed to take screenshot: ${(e as Error).message}`
+        ctx.exitCode = 1
+      }
+    })
+
+  cli
     .command('type <text>', dedent`
       Type text into the terminal character by character.
 

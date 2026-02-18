@@ -618,6 +618,11 @@ export class Session {
     return this.waitIdle()
   }
 
+  /** Get the raw terminal data for image rendering or other processing */
+  getTerminalData(): TerminalData {
+    return this.term.getJson()
+  }
+
   resize(options: { cols: number; rows: number }): void {
     this.cols = options.cols
     this.rows = options.rows

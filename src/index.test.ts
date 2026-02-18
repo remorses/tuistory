@@ -407,6 +407,56 @@ test.skip('opencode interactions', async () => {
   session.close()
 }, 30000)
 
+test('screenshot renders to image', async () => {
+  const session = await launchTerminal({
+    command: 'echo',
+    args: ['-e', '\\x1b[32mgreen\\x1b[0m \\x1b[1mbold\\x1b[0m normal'],
+    cols: 40,
+    rows: 5,
+  })
+
+  await session.text({ timeout: 2000 })
+
+  const data = session.getTerminalData()
+  expect(data.cols).toBe(40)
+  expect(data.lines.length).toBeGreaterThan(0)
+
+  const { renderTerminalToImage } = await import('ghostty-opentui/image')
+  const image = await renderTerminalToImage(data, { format: 'jpeg' })
+
+  // JPEG magic bytes: FF D8 FF
+  expect(image[0]).toBe(0xff)
+  expect(image[1]).toBe(0xd8)
+  expect(image[2]).toBe(0xff)
+  expect(image.length).toBeGreaterThan(500)
+
+  session.close()
+}, 15000)
+
+test('screenshot with PNG format', async () => {
+  const session = await launchTerminal({
+    command: 'echo',
+    args: ['hello screenshot'],
+    cols: 60,
+    rows: 10,
+  })
+
+  await session.text({ timeout: 2000 })
+
+  const data = session.getTerminalData()
+  const { renderTerminalToImage } = await import('ghostty-opentui/image')
+  const image = await renderTerminalToImage(data, { format: 'png' })
+
+  // PNG magic bytes
+  expect(image[0]).toBe(0x89)
+  expect(image[1]).toBe(0x50) // P
+  expect(image[2]).toBe(0x4e) // N
+  expect(image[3]).toBe(0x47) // G
+  expect(image.length).toBeGreaterThan(500)
+
+  session.close()
+}, 15000)
+
 test.skip('claude launch', async () => {
   const session = await launchTerminal({
     command: 'claude',

@@ -39,7 +39,7 @@ describe('CLI help and version', () => {
     const { stdout, exitCode } = await runCli(['--help'])
     expect(exitCode).toBe(0)
     expect(stdout).toMatchInlineSnapshot(`
-"tuistory/0.0.12
+"tuistory/0.0.13
 
 Usage:
   $ tuistory <command> [options]
@@ -94,6 +94,35 @@ Commands:
     --fg <color>                  Only text with foreground color
     --bg <color>                  Only text with background color
     --no-cursor                   Hide cursor in snapshot output
+
+  screenshot                      Capture the terminal screen as an image file (JPEG/PNG/WebP).
+                                  
+                                  Renders the current terminal buffer to a colored image with
+                                  JetBrains Mono Nerd font on a fixed-width character grid.
+                                  Outputs the image file path to stdout.
+                                  
+                                  **For AI agents and bots:** Use this to screenshot terminal
+                                  TUI applications and share them with users via messaging
+                                  apps. Bots like kimaki or openclaw can show users live
+                                  progress of terminal commands by uploading the image.
+                                  
+                                  Using tuistory is preferable over tmux background sessions
+                                  because you can programmatically control the terminal (type,
+                                  press keys, wait for text, resize) and capture pixel-perfect
+                                  screenshots — designed from first principles for agents.
+                                  
+                                  Waits for the terminal to become idle before capturing unless
+                                  \`--immediate\` is passed.
+    -s, --session <name>          Session name (required)
+    -o, --output <path>           Output file path (default: temp file)
+    --width <px>                  Image width in pixels (auto from cols)
+    --font-size <px>              Font size in pixels (default: 14)
+    --line-height <n>             Line height multiplier (default: 1.5)
+    --background <color>          Background color (default: #1a1b26)
+    --foreground <color>          Text color (default: #c0caf5)
+    --format <fmt>                Image format (default: jpeg)
+    --quality <n>                 Quality for lossy formats (0-100) (default: 90)
+    --immediate                   Don't wait for idle state
 
   type <text>                     Type text into the terminal character by character.
                                   
@@ -250,7 +279,7 @@ tuistory -s ai close"
     const { stdout, exitCode } = await runCli(['launch', '--help'])
     expect(exitCode).toBe(0)
     expect(stdout).toMatchInlineSnapshot(`
-"tuistory/0.0.12
+"tuistory/0.0.13
 
 Usage:
   $ tuistory launch <command>
