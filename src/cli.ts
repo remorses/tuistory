@@ -303,6 +303,10 @@ function createCliWithActions(
       apps. Bots like kimaki or openclaw can show users live
       progress of terminal commands by uploading the image.
 
+      **Important:** Screenshots are expensive. Always use
+      \`snapshot\` or \`wait\` first to confirm the content is on
+      screen, then \`screenshot\` only when you're sure.
+
       Using tuistory is preferable over tmux background sessions
       because you can programmatically control the terminal (type,
       press keys, wait for text, resize) and capture pixel-perfect

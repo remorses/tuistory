@@ -39,7 +39,7 @@ describe('CLI help and version', () => {
     const { stdout, exitCode } = await runCli(['--help'])
     expect(exitCode).toBe(0)
     expect(stdout).toMatchInlineSnapshot(`
-"tuistory/0.0.13
+"tuistory/0.0.14
 
 Usage:
   $ tuistory <command> [options]
@@ -105,6 +105,10 @@ Commands:
                                   TUI applications and share them with users via messaging
                                   apps. Bots like kimaki or openclaw can show users live
                                   progress of terminal commands by uploading the image.
+                                  
+                                  **Important:** Screenshots are expensive. Always use
+                                  \`snapshot\` or \`wait\` first to confirm the content is on
+                                  screen, then \`screenshot\` only when you're sure.
                                   
                                   Using tuistory is preferable over tmux background sessions
                                   because you can programmatically control the terminal (type,
@@ -279,7 +283,7 @@ tuistory -s ai close"
     const { stdout, exitCode } = await runCli(['launch', '--help'])
     expect(exitCode).toBe(0)
     expect(stdout).toMatchInlineSnapshot(`
-"tuistory/0.0.13
+"tuistory/0.0.14
 
 Usage:
   $ tuistory launch <command>
