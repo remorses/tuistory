@@ -26,7 +26,8 @@
   "files": ["dist"],
   "scripts": {
     "build": "tsc && chmod +x dist/cli.js",
-    "test": "bun test",
+    "test": "pnpm test:node && pnpm test:bun",
+    "test:bun": "bun test",
     "test:node": "vitest --run",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
