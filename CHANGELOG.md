@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.14
+
+- Add `screenshot` CLI command that renders the terminal buffer to a JPEG/PNG/WebP image — useful for AI agents to capture TUI screenshots and share them via messaging apps
+- Fix screenshot test ANSI rendering on macOS by using `bash -c printf` instead of `/bin/echo -e`
+- Stabilize `Session.text()` snapshots to reduce flakiness in tests
+- Downgrade `node-pty` to `0.10.1` to fix `posix_spawnp` errors on some systems
+- Expose `getTerminalData()` on `Session` for raw terminal buffer access
+- Add SKILL.md — agent guide for using tuistory programmatically
+
 ## 0.0.13
 
 - Replaced CLI framework `cac` with `goke` for better type safety and help messages
