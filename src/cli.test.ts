@@ -8,6 +8,7 @@ import path from 'node:path'
 import os from 'node:os'
 
 const CLI_PATH = new URL('./cli.ts', import.meta.url).pathname
+const TEST_PID_FILE = `/tmp/tuistory/relay-${process.env.TUISTORY_PORT}.pid`
 
 // Helper to run CLI command
 async function runCli(args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
@@ -23,18 +24,35 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
   return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode }
 }
 
+// Kill the test daemon by PID (daemon-stop command was removed to protect user sessions)
+async function killTestDaemon() {
+  try {
+    const pid = Number(fs.readFileSync(TEST_PID_FILE, 'utf-8').trim())
+    if (!isNaN(pid) && pid > 0) {
+      process.kill(pid, 'SIGTERM')
+      // Wait for it to exit
+      const start = Date.now()
+      while (Date.now() - start < 3000) {
+        try { process.kill(pid, 0); await new Promise((r) => setTimeout(r, 100)) }
+        catch { break }
+      }
+    }
+  } catch {}
+  try { fs.unlinkSync(TEST_PID_FILE) } catch {}
+}
+
 // Helper to create session args for readability
 const session = (name: string) => ['-s', name] as const
 
-// Kill any existing daemon before tests
+// Kill any existing test daemon before tests
 beforeAll(async () => {
-  await runCli(['daemon-stop']).catch(() => {})
+  await killTestDaemon()
   await new Promise((r) => setTimeout(r, 500))
 })
 
-// Clean up daemon after tests
+// Clean up test daemon after tests
 afterAll(async () => {
-  await runCli(['daemon-stop']).catch(() => {})
+  await killTestDaemon()
 })
 
 describe('CLI help and version', () => {
@@ -258,13 +276,6 @@ Commands:
                                   
                                   The relay daemon writes logs to this file. Useful for
                                   debugging when commands fail or the daemon won't start.
-
-  daemon-stop                     Stop the background relay daemon.
-                                  
-                                  The daemon runs as a detached process that holds all
-                                  sessions in memory. Stopping it closes all active sessions.
-                                  
-                                  A new daemon is started automatically on the next command.
 
 Options:
   -h, --help     Display this message

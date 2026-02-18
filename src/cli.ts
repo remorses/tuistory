@@ -14,7 +14,10 @@ import { Session, type Key, isValidKey, VALID_KEYS } from './session.js'
 // Constants
 export const RELAY_PORT = Number(process.env.TUISTORY_PORT) || 19977
 const LOG_BASE_DIR = os.platform() === 'win32' ? os.tmpdir() : '/tmp'
-export const LOG_FILE_PATH = process.env.TUISTORY_LOG_FILE_PATH || path.join(LOG_BASE_DIR, 'tuistory', 'relay-server.log')
+const TUISTORY_DIR = path.join(LOG_BASE_DIR, 'tuistory')
+export const LOG_FILE_PATH = process.env.TUISTORY_LOG_FILE_PATH || path.join(TUISTORY_DIR, 'relay-server.log')
+const PID_FILE = path.join(TUISTORY_DIR, `relay-${RELAY_PORT}.pid`)
+const RESTART_LOCK_FILE = path.join(TUISTORY_DIR, `restart-${RELAY_PORT}.lock`)
 
 const __filename = fileURLToPath(import.meta.url)
 
@@ -848,23 +851,32 @@ function createCliWithActions(
       ctx.stdout = LOG_FILE_PATH
     })
 
-  cli
-    .command('daemon-stop', dedent`
-      Stop the background relay daemon.
-
-      The daemon runs as a detached process that holds all
-      sessions in memory. Stopping it closes all active sessions.
-
-      A new daemon is started automatically on the next command.
-    `)
-    .example('tuistory daemon-stop')
-    .action(async () => {
-      ctx.stdout = 'Daemon stopping...'
-      // Delay exit to allow HTTP response to be sent
-      setTimeout(() => {
-        process.exit(0)
-      }, 100)
-    })
+  // daemon-stop removed: too dangerous — kills all active sessions across all
+  // users of this machine. Tests use TUISTORY_PORT for isolation instead.
+  // If you need to stop the daemon manually, use: kill $(cat /tmp/tuistory/relay-{port}.pid)
+  //
+  // cli
+  //   .command('daemon-stop', dedent`
+  //     Stop the background relay daemon.
+  //
+  //     The daemon runs as a detached process that holds all
+  //     sessions in memory. Stopping it closes all active sessions.
+  //
+  //     A new daemon is started automatically on the next command.
+  //   `)
+  //   .example('tuistory daemon-stop')
+  //   .action(async () => {
+  //     for (const [name, session] of sessions) {
+  //       session.close()
+  //       logger.log(`Session "${name}" closed on daemon-stop`)
+  //     }
+  //     sessions.clear()
+  //     try { fs.unlinkSync(PID_FILE) } catch {}
+  //     ctx.stdout = 'Daemon stopping...'
+  //     setTimeout(() => {
+  //       process.exit(0)
+  //     }, 100)
+  //   })
 
   // Global examples showing the full workflow pattern
   cli.example(dedent`
@@ -917,23 +929,133 @@ function compareVersions(v1: string, v2: string): number {
   return 0
 }
 
-// Kill relay server on port
+// Kill relay server using PID file (SIGTERM for graceful shutdown).
+// Escalates to SIGKILL if SIGTERM doesn't work, then falls back to kill-port-process.
 async function killRelay(): Promise<void> {
+  let pid: number | null = null
+  let processExited = false
+
+  // Try PID-based kill first (graceful SIGTERM)
   try {
-    const { killPortProcess } = await import('kill-port-process')
-    await killPortProcess(RELAY_PORT)
+    pid = Number(fs.readFileSync(PID_FILE, 'utf-8').trim())
+    if (isNaN(pid) || pid <= 0) pid = null
   } catch {
-    // Ignore errors
+    // PID file missing
+  }
+
+  if (pid !== null) {
+    try {
+      process.kill(pid, 'SIGTERM')
+      // Wait for process to exit (up to 3s)
+      const start = Date.now()
+      while (Date.now() - start < 3000) {
+        try {
+          process.kill(pid, 0) // Check if still alive
+          await new Promise((r) => setTimeout(r, 100))
+        } catch {
+          processExited = true
+          break
+        }
+      }
+
+      // Escalate to SIGKILL if SIGTERM didn't work
+      if (!processExited) {
+        try {
+          process.kill(pid, 'SIGKILL')
+          processExited = true
+        } catch {
+          processExited = true // Already dead
+        }
+      }
+    } catch {
+      // Process doesn't exist (stale PID file)
+      processExited = true
+    }
+  }
+
+  // Fallback: kill by port if PID-based kill didn't work or PID file was missing
+  if (!processExited) {
+    try {
+      const { killPortProcess } = await import('kill-port-process')
+      await killPortProcess(RELAY_PORT)
+    } catch {
+      // Ignore errors
+    }
+  }
+
+  // Clean up PID file
+  try { fs.unlinkSync(PID_FILE) } catch {}
+}
+
+// Acquire a file lock for daemon restart (prevents two clients racing to kill+restart).
+// Returns true if lock acquired, false if another client is already restarting.
+// Lock payload: "pid:timestamp" — only the lock owner (matching PID) can release it.
+const RESTART_LOCK_STALE_MS = 10000
+
+function acquireRestartLock(): boolean {
+  try {
+    if (!fs.existsSync(TUISTORY_DIR)) {
+      fs.mkdirSync(TUISTORY_DIR, { recursive: true })
+    }
+    fs.writeFileSync(RESTART_LOCK_FILE, `${process.pid}:${Date.now()}`, { flag: 'wx' })
+    return true
+  } catch {
+    // Lock file exists - check if stale (holder crashed)
+    try {
+      const content = fs.readFileSync(RESTART_LOCK_FILE, 'utf-8')
+      const [pidStr, tsStr] = content.split(':')
+      const lockPid = Number(pidStr)
+      const lockTime = Number(tsStr)
+
+      // Check if lock is stale: either too old or holder process is dead
+      let isStale = false
+      if (Date.now() - lockTime > RESTART_LOCK_STALE_MS) {
+        isStale = true
+      } else if (!isNaN(lockPid) && lockPid > 0) {
+        try {
+          process.kill(lockPid, 0) // Check if holder process is alive
+        } catch {
+          isStale = true // Holder process is dead
+        }
+      }
+
+      if (isStale) {
+        try { fs.unlinkSync(RESTART_LOCK_FILE) } catch {}
+        // Retry once (non-recursive to avoid stack growth)
+        try {
+          fs.writeFileSync(RESTART_LOCK_FILE, `${process.pid}:${Date.now()}`, { flag: 'wx' })
+          return true
+        } catch {
+          return false
+        }
+      }
+    } catch {}
+    return false
   }
 }
 
-// Wait for relay server to start
-async function waitForRelay(timeoutMs: number = 5000): Promise<boolean> {
+function releaseRestartLock(): void {
+  // Only release if we own the lock (PID matches)
+  try {
+    const content = fs.readFileSync(RESTART_LOCK_FILE, 'utf-8')
+    const [pidStr] = content.split(':')
+    if (Number(pidStr) === process.pid) {
+      fs.unlinkSync(RESTART_LOCK_FILE)
+    }
+  } catch {}
+}
+
+// Wait for relay server to start. If minVersion is provided, waits until the
+// relay reports a version >= minVersion (prevents connecting to a stale daemon
+// that hasn't finished restarting yet).
+async function waitForRelay(timeoutMs: number = 5000, minVersion?: string): Promise<boolean> {
   const startTime = Date.now()
   while (Date.now() - startTime < timeoutMs) {
     const version = await getRelayVersion()
     if (version !== null) {
-      return true
+      if (!minVersion || compareVersions(version, minVersion) >= 0) {
+        return true
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
@@ -977,27 +1099,40 @@ async function startRelayServer() {
     hostname: '127.0.0.1',
   })
 
+  // Write PID file so killRelay() can send SIGTERM instead of kill-by-port
+  try {
+    if (!fs.existsSync(TUISTORY_DIR)) {
+      fs.mkdirSync(TUISTORY_DIR, { recursive: true })
+    }
+    fs.writeFileSync(PID_FILE, String(process.pid))
+  } catch {}
+
   logger.log(`Relay server started on port ${RELAY_PORT}`)
   logger.log(`Version: ${VERSION}`)
+  logger.log(`PID: ${process.pid}`)
 
-  process.on('SIGINT', () => {
-    logger.log('Relay server shutting down (SIGINT)')
+  const gracefulShutdown = (signal: string) => {
+    logger.log(`Relay server shutting down (${signal})`)
     for (const [name, session] of sessions) {
       session.close()
       logger.log(`Session "${name}" closed on shutdown`)
     }
+    sessions.clear()
+    try { fs.unlinkSync(PID_FILE) } catch {}
     server.close()
     process.exit(0)
+  }
+
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'))
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
+
+  // Prevent unhandled errors from crashing the daemon and killing all sessions.
+  // Log and continue — individual sessions may break but others survive.
+  process.on('uncaughtException', (err) => {
+    logger.error(`Uncaught exception (daemon survived): ${err.stack || err.message}`)
   })
-
-  process.on('SIGTERM', () => {
-    logger.log('Relay server shutting down (SIGTERM)')
-    for (const [name, session] of sessions) {
-      session.close()
-      logger.log(`Session "${name}" closed on shutdown`)
-    }
-    server.close()
-    process.exit(0)
+  process.on('unhandledRejection', (reason) => {
+    logger.error(`Unhandled rejection (daemon survived): ${reason}`)
   })
 
   console.log(`tuistory relay server running on port ${RELAY_PORT}`)
@@ -1055,15 +1190,39 @@ async function runCliClient() {
     const comparison = compareVersions(serverVersion, VERSION)
 
     if (comparison < 0) {
-      // Server is older than client - restart it
-      console.error(pc.yellow(`Relay server version mismatch (server: ${serverVersion}, client: ${VERSION}), restarting...`))
-      await killRelay()
-      spawnRelayServer()
+      // Server is older than client - use file lock to prevent two clients
+      // from racing to kill+restart simultaneously (causes double restart)
+      const lockAcquired = acquireRestartLock()
 
-      const started = await waitForRelay()
-      if (!started) {
-        console.error(pc.red(`Failed to restart relay server. Check logs at: ${LOG_FILE_PATH}`))
-        process.exit(1)
+      if (lockAcquired) {
+        try {
+          // Re-check version after acquiring lock — another client may have
+          // already restarted the daemon while we were waiting
+          const currentVersion = await getRelayVersion()
+          if (currentVersion !== null && compareVersions(currentVersion, VERSION) >= 0) {
+            // Already restarted by another client, nothing to do
+          } else {
+            console.error(pc.yellow(`Relay server version mismatch (server: ${serverVersion}, client: ${VERSION}), restarting...`))
+            await killRelay()
+            spawnRelayServer()
+
+            const started = await waitForRelay(5000, VERSION)
+            if (!started) {
+              console.error(pc.red(`Failed to restart relay server. Check logs at: ${LOG_FILE_PATH}`))
+              process.exit(1)
+            }
+          }
+        } finally {
+          releaseRestartLock()
+        }
+      } else {
+        // Another client is restarting the daemon, wait longer than stale lock
+        // timeout (10s) to give the lock holder time to finish restarting
+        const started = await waitForRelay(15000, VERSION)
+        if (!started) {
+          console.error(pc.red(`Failed to connect to relay server after restart. Check logs at: ${LOG_FILE_PATH}`))
+          process.exit(1)
+        }
       }
     }
     // If server is newer, just use it (don't kill a newer server)
