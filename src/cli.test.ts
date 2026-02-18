@@ -1,3 +1,6 @@
+// Use a separate daemon port for tests so they don't kill user sessions on the default port (19977)
+process.env.TUISTORY_PORT = '19951'
+
 import { spawn } from 'bun'
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
 import fs from 'node:fs'
@@ -570,17 +573,23 @@ console.log(result);
     fs.writeFileSync(scriptPath, script)
 
     try {
-      // Launch node inspect
-      await runCli(['launch', `node inspect ${scriptPath}`, ...s, '--cols', '100', '--rows', '30'])
-      await runCli(['wait', 'Break on start', ...s, '--timeout', '10000'])
+      // Launch node inspect (node debugger can be slow to connect, use generous timeouts)
+      const launch = await runCli(['launch', `node inspect ${scriptPath}`, ...s, '--cols', '100', '--rows', '30'])
+      expect(launch.exitCode).toBe(0)
+
+      const waitStart = await runCli(['wait', 'Break on start', ...s, '--timeout', '15000'])
+      expect(waitStart.exitCode).toBe(0)
 
       // Continue to debugger statement
       await runCli(['type', 'cont', ...s])
       await runCli(['press', 'enter', ...s])
-      await runCli(['wait', 'break in', ...s, '--timeout', '5000'])
+
+      const waitBreak = await runCli(['wait', 'break in', ...s, '--timeout', '10000'])
+      expect(waitBreak.exitCode).toBe(0)
 
       // Check we hit the debugger statement
       const breakSnapshot = await runCli(['snapshot', ...s, '--trim'])
+      expect(breakSnapshot.exitCode).toBe(0)
       // Verify debugger output (avoid machine-specific paths and UUIDs)
       expect(breakSnapshot.stdout).toContain('Debugger listening on')
       expect(breakSnapshot.stdout).toContain('Debugger attached')
@@ -592,19 +601,26 @@ console.log(result);
       // Enter REPL mode to inspect variables
       await runCli(['type', 'repl', ...s])
       await runCli(['press', 'enter', ...s])
-      await runCli(['wait', 'Press Ctrl', ...s])
+
+      const waitRepl = await runCli(['wait', 'Press Ctrl', ...s, '--timeout', '10000'])
+      expect(waitRepl.exitCode).toBe(0)
 
       // Inspect greeting variable
       await runCli(['type', 'greeting', ...s])
       await runCli(['press', 'enter', ...s])
-      await runCli(['wait', 'hello', ...s])
+
+      const waitGreeting = await runCli(['wait', 'hello', ...s, '--timeout', '5000'])
+      expect(waitGreeting.exitCode).toBe(0)
 
       // Inspect count variable
       await runCli(['type', 'count', ...s])
       await runCli(['press', 'enter', ...s])
-      await runCli(['wait', '42', ...s])
+
+      const waitCount = await runCli(['wait', '42', ...s, '--timeout', '5000'])
+      expect(waitCount.exitCode).toBe(0)
 
       const replSnapshot = await runCli(['snapshot', ...s, '--trim'])
+      expect(replSnapshot.exitCode).toBe(0)
       // Verify REPL mode shows variable values
       expect(replSnapshot.stdout).toContain('debug> repl')
       expect(replSnapshot.stdout).toContain('Press Ctrl+C to leave debug repl')
@@ -615,10 +631,12 @@ console.log(result);
 
       // Exit REPL and continue
       await runCli(['press', 'ctrl', 'c', ...s])
-      await runCli(['wait', 'debug>', ...s])
+      const waitDebugPrompt = await runCli(['wait', 'debug>', ...s, '--timeout', '5000'])
+      expect(waitDebugPrompt.exitCode).toBe(0)
       await runCli(['type', 'cont', ...s])
       await runCli(['press', 'enter', ...s])
-      await runCli(['wait', 'hello 42', ...s])
+      const waitResult = await runCli(['wait', 'hello 42', ...s, '--timeout', '10000'])
+      expect(waitResult.exitCode).toBe(0)
 
       // Get backtrace before exit
       const finalSnapshot = await runCli(['snapshot', ...s, '--trim'])
@@ -629,5 +647,5 @@ console.log(result);
       // Clean up temp file
       fs.unlinkSync(scriptPath)
     }
-  }, 30000)
+  }, 60000)
 })

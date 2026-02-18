@@ -12,7 +12,7 @@ import pc from 'picocolors'
 import { Session, type Key, isValidKey, VALID_KEYS } from './session.js'
 
 // Constants
-export const RELAY_PORT = 19977
+export const RELAY_PORT = Number(process.env.TUISTORY_PORT) || 19977
 const LOG_BASE_DIR = os.platform() === 'win32' ? os.tmpdir() : '/tmp'
 export const LOG_FILE_PATH = process.env.TUISTORY_LOG_FILE_PATH || path.join(LOG_BASE_DIR, 'tuistory', 'relay-server.log')
 
