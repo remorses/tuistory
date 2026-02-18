@@ -409,8 +409,8 @@ test.skip('opencode interactions', async () => {
 
 test('screenshot renders to image', async () => {
   const session = await launchTerminal({
-    command: 'echo',
-    args: ['-e', '\\x1b[32mgreen\\x1b[0m \\x1b[1mbold\\x1b[0m normal'],
+    command: 'bash',
+    args: ['-c', 'printf "\\x1b[32mgreen\\x1b[0m \\x1b[1mbold\\x1b[0m normal\\n"'],
     cols: 40,
     rows: 5,
   })
@@ -429,6 +429,11 @@ test('screenshot renders to image', async () => {
   expect(image[1]).toBe(0xd8)
   expect(image[2]).toBe(0xff)
   expect(image.length).toBeGreaterThan(500)
+
+  // Save for visual inspection
+  const fs = await import('fs')
+  fs.mkdirSync('tmp', { recursive: true })
+  fs.writeFileSync('tmp/test-screenshot.jpg', image)
 
   session.close()
 }, 15000)
@@ -453,6 +458,11 @@ test('screenshot with PNG format', async () => {
   expect(image[2]).toBe(0x4e) // N
   expect(image[3]).toBe(0x47) // G
   expect(image.length).toBeGreaterThan(500)
+
+  // Save for visual inspection
+  const fs = await import('fs')
+  fs.mkdirSync('tmp', { recursive: true })
+  fs.writeFileSync('tmp/test-screenshot.png', image)
 
   session.close()
 }, 15000)
