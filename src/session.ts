@@ -1,5 +1,7 @@
 import { PersistentTerminal, StyleFlags, type TerminalData } from 'ghostty-opentui'
 import { spawn, type IPty } from 'tuistory/pty'
+import fs from 'node:fs'
+import path from 'node:path'
 
 export interface LaunchOptions {
   command: string
@@ -10,6 +12,23 @@ export interface LaunchOptions {
   env?: Record<string, string | undefined>
   /** If true, include cursor marker in text snapshots. Default: false */
   showCursor?: boolean
+}
+
+function sanitizeTermcastDbSuffix(suffix: string): string {
+  return suffix.replace(/[^a-zA-Z0-9_-]/g, '_')
+}
+
+function getTermcastDbArtifactPaths(options: {
+  cwd: string
+  suffix: string
+}): string[] {
+  const sanitizedSuffix = sanitizeTermcastDbSuffix(options.suffix)
+  const basePath = path.join(
+    options.cwd,
+    '.termcast-bundle',
+    `data-${sanitizedSuffix}.db`,
+  )
+  return [basePath, `${basePath}-shm`, `${basePath}-wal`]
 }
 
 export interface TextOptions {
@@ -156,6 +175,8 @@ export class Session {
   private term: PersistentTerminal
   private cols: number
   private rows: number
+  private sessionCwd: string
+  private generatedTermcastDbSuffix?: string
   private idleResolvers: Array<() => void> = []
   private idleTimer?: ReturnType<typeof setTimeout>
   private hasReceivedData = false
@@ -167,26 +188,33 @@ export class Session {
     this.cols = options.cols ?? 80
     this.rows = options.rows ?? 24
     this.showCursor = options.showCursor ?? false
+    this.sessionCwd = options.cwd ?? process.cwd()
 
     this.term = new PersistentTerminal({
       cols: this.cols,
       rows: this.rows,
     })
 
+    const providedTermcastDbSuffix = options.env?.TERMCAST_DB_SUFFIX
+    const termcastDbSuffix =
+      providedTermcastDbSuffix ||
+      `tuistory-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    if (!providedTermcastDbSuffix) {
+      this.generatedTermcastDbSuffix = termcastDbSuffix
+    }
+
     const env = {
       ...process.env,
       ...options.env,
       TERM: 'xterm-truecolor',
       COLORTERM: 'truecolor',
-      TERMCAST_DB_SUFFIX:
-        options.env?.TERMCAST_DB_SUFFIX ||
-        `tuistory-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      TERMCAST_DB_SUFFIX: termcastDbSuffix,
     }
 
     this.pty = spawn(options.command, options.args ?? [], {
       cols: this.cols,
       rows: this.rows,
-      cwd: options.cwd ?? process.cwd(),
+      cwd: this.sessionCwd,
       env,
     })
 
@@ -635,5 +663,21 @@ export class Session {
     clearTimeout(this.idleTimer)
     this.pty.kill()
     this.term.destroy()
+
+    if (!this.generatedTermcastDbSuffix) {
+      return
+    }
+
+    const artifactPaths = getTermcastDbArtifactPaths({
+      cwd: this.sessionCwd,
+      suffix: this.generatedTermcastDbSuffix,
+    })
+    artifactPaths.forEach((artifactPath) => {
+      try {
+        fs.rmSync(artifactPath, { force: true })
+      } catch {
+        // Best effort cleanup. Session close should never fail due to filesystem state.
+      }
+    })
   }
 }

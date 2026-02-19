@@ -1,5 +1,8 @@
 /// <reference path="../node_modules/bun-types/test-globals.d.ts" />
 import { launchTerminal } from './index.js'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 
 test('echo command', async () => {
   const session = await launchTerminal({
@@ -152,6 +155,96 @@ test('waitForText with regex', async () => {
   await session.type('exit')
   await session.press('enter')
   session.close()
+}, 10000)
+
+test('cleans up auto-generated TERMCAST sqlite artifacts on close', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tuistory-termcast-db-cleanup-'))
+
+  const session = await launchTerminal({
+    command: 'sh',
+    args: [
+      '-c',
+      'mkdir -p .termcast-bundle && touch ".termcast-bundle/data-${TERMCAST_DB_SUFFIX}.db" ".termcast-bundle/data-${TERMCAST_DB_SUFFIX}.db-shm" ".termcast-bundle/data-${TERMCAST_DB_SUFFIX}.db-wal" && echo ready',
+    ],
+    cwd,
+    cols: 80,
+    rows: 24,
+  })
+  let isClosed = false
+
+  try {
+    await session.waitForText('ready', { timeout: 5000 })
+
+    const bundleDir = path.join(cwd, '.termcast-bundle')
+    const dbFiles = fs
+      .readdirSync(bundleDir)
+      .filter((entry) => /^data-tuistory-.*\.db$/.test(entry))
+    expect(dbFiles.length).toBe(1)
+
+    const baseFileName = dbFiles[0]
+    const baseFilePath = path.join(bundleDir, baseFileName)
+    const shmFilePath = `${baseFilePath}-shm`
+    const walFilePath = `${baseFilePath}-wal`
+    expect(fs.existsSync(baseFilePath)).toBe(true)
+    expect(fs.existsSync(shmFilePath)).toBe(true)
+    expect(fs.existsSync(walFilePath)).toBe(true)
+
+    session.close()
+    isClosed = true
+
+    expect(fs.existsSync(baseFilePath)).toBe(false)
+    expect(fs.existsSync(shmFilePath)).toBe(false)
+    expect(fs.existsSync(walFilePath)).toBe(false)
+  } finally {
+    if (!isClosed) {
+      session.close()
+    }
+    fs.rmSync(cwd, { recursive: true, force: true })
+  }
+}, 10000)
+
+test('does not clean up TERMCAST sqlite artifacts for explicit TERMCAST_DB_SUFFIX', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tuistory-termcast-db-explicit-'))
+  const explicitSuffix = 'keep-explicit-suffix'
+
+  const session = await launchTerminal({
+    command: 'sh',
+    args: [
+      '-c',
+      'mkdir -p .termcast-bundle && touch ".termcast-bundle/data-${TERMCAST_DB_SUFFIX}.db" ".termcast-bundle/data-${TERMCAST_DB_SUFFIX}.db-shm" ".termcast-bundle/data-${TERMCAST_DB_SUFFIX}.db-wal" && echo ready',
+    ],
+    cwd,
+    cols: 80,
+    rows: 24,
+    env: {
+      TERMCAST_DB_SUFFIX: explicitSuffix,
+    },
+  })
+  let isClosed = false
+
+  const bundleDir = path.join(cwd, '.termcast-bundle')
+  const baseFilePath = path.join(bundleDir, `data-${explicitSuffix}.db`)
+  const shmFilePath = `${baseFilePath}-shm`
+  const walFilePath = `${baseFilePath}-wal`
+
+  try {
+    await session.waitForText('ready', { timeout: 5000 })
+    expect(fs.existsSync(baseFilePath)).toBe(true)
+    expect(fs.existsSync(shmFilePath)).toBe(true)
+    expect(fs.existsSync(walFilePath)).toBe(true)
+
+    session.close()
+    isClosed = true
+
+    expect(fs.existsSync(baseFilePath)).toBe(true)
+    expect(fs.existsSync(shmFilePath)).toBe(true)
+    expect(fs.existsSync(walFilePath)).toBe(true)
+  } finally {
+    if (!isClosed) {
+      session.close()
+    }
+    fs.rmSync(cwd, { recursive: true, force: true })
+  }
 }, 10000)
 
 test('click fails with multiple matches', async () => {
