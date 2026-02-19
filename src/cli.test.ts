@@ -15,6 +15,7 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
   const proc = spawn(['bun', CLI_PATH, ...args], {
     stdout: 'pipe',
     stderr: 'pipe',
+    env: { ...process.env, TUISTORY_PORT: process.env.TUISTORY_PORT },
   })
 
   const stdout = await new Response(proc.stdout).text()
@@ -24,17 +25,21 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
   return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode }
 }
 
-// Kill the test daemon by PID (daemon-stop command was removed to protect user sessions)
+// Kill the test daemon by PID (daemon-stop command was removed to protect user sessions).
+// Sends SIGTERM for graceful shutdown, escalates to SIGKILL if it doesn't exit within 2s.
 async function killTestDaemon() {
   try {
     const pid = Number(fs.readFileSync(TEST_PID_FILE, 'utf-8').trim())
     if (!isNaN(pid) && pid > 0) {
       process.kill(pid, 'SIGTERM')
-      // Wait for it to exit
       const start = Date.now()
-      while (Date.now() - start < 3000) {
+      let exited = false
+      while (Date.now() - start < 2000) {
         try { process.kill(pid, 0); await new Promise((r) => setTimeout(r, 100)) }
-        catch { break }
+        catch { exited = true; break }
+      }
+      if (!exited) {
+        try { process.kill(pid, 'SIGKILL') } catch {}
       }
     }
   } catch {}
@@ -415,9 +420,10 @@ describe('CLI concurrent sessions', () => {
     await runCli(['close', '-s', 'session-a'])
     await runCli(['close', '-s', 'session-b'])
 
-    // Verify sessions closed
+    // Verify our sessions are closed (other describes may run concurrently)
     const sessionsAfter = await runCli(['sessions'])
-    expect(sessionsAfter.stdout).toBe('No active sessions')
+    expect(sessionsAfter.stdout).not.toContain('session-a')
+    expect(sessionsAfter.stdout).not.toContain('session-b')
   }, 20000)
 })
 

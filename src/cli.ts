@@ -5,11 +5,41 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import * as errore from 'errore'
 import { goke } from 'goke'
 import { z } from 'zod'
 import dedent from 'string-dedent'
 import pc from 'picocolors'
 import { Session, type Key, isValidKey, VALID_KEYS } from './session.js'
+
+// Domain errors — errore tagged errors for typed error handling.
+// These replace throw/catch patterns with Error | T return types.
+
+class RelayConnectionError extends errore.createTaggedError({
+  name: 'RelayConnectionError',
+  message: 'Failed to connect to relay on port $port: $reason',
+}) {}
+
+class RelayStartError extends errore.createTaggedError({
+  name: 'RelayStartError',
+  message: 'Failed to $action relay server: $reason',
+}) {}
+
+class SessionCommandError extends errore.createTaggedError({
+  name: 'SessionCommandError',
+  message: 'Failed to $operation session "$session": $reason',
+}) {}
+
+class PidFileError extends errore.createTaggedError({
+  name: 'PidFileError',
+  message: 'PID file operation failed for $path: $reason',
+}) {}
+
+// Normalize unknown catch values to a reason string.
+// errore.tryAsync catch receives unknown — this safely extracts the message.
+function errorReason(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
 
 // Constants
 export const RELAY_PORT = Number(process.env.TUISTORY_PORT) || 19977
@@ -159,42 +189,47 @@ function createCliWithActions(
       wait: boolean
       timeout: number
     }) => {
-      try {
-        // Check for duplicate session name
-        if (sessions.has(options.session)) {
-          ctx.stderr = `Session "${options.session}" already exists. Use a different name or close it first.`
+      // Check for duplicate session name
+      if (sessions.has(options.session)) {
+        ctx.stderr = `Session "${options.session}" already exists. Use a different name or close it first.`
+        ctx.exitCode = 1
+        return
+      }
+
+      const env = parseEnvOptions(options.env)
+
+      // Let the shell handle command parsing — supports pipes, env vars, subshells, etc.
+      const isWindows = os.platform() === 'win32'
+      const session = errore.try(() => new Session({
+        command: isWindows ? 'cmd.exe' : 'sh',
+        args: isWindows ? ['/c', command] : ['-c', command],
+        cols: options.cols,
+        rows: options.rows,
+        cwd: options.cwd,
+        env,
+      }))
+      if (session instanceof Error) {
+        ctx.stderr = new SessionCommandError({ operation: 'launch', session: options.session, reason: errorReason(session), cause: session }).message
+        ctx.exitCode = 1
+        return
+      }
+
+      sessions.set(options.session, session)
+
+      if (options.wait) {
+        const waited = await errore.tryAsync({
+          try: () => session.waitForData({ timeout: options.timeout }),
+          catch: (e) => new SessionCommandError({ operation: 'launch', session: options.session, reason: errorReason(e), cause: e }),
+        })
+        if (waited instanceof Error) {
+          ctx.stderr = waited.message
           ctx.exitCode = 1
           return
         }
-
-        // Parse command - split by spaces but respect quotes
-        const parts = command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [command]
-        const cmd = parts[0].replace(/^["']|["']$/g, '')
-        const args = parts.slice(1).map(p => p.replace(/^["']|["']$/g, ''))
-
-        const env = parseEnvOptions(options.env)
-
-        const session = new Session({
-          command: cmd,
-          args,
-          cols: options.cols,
-          rows: options.rows,
-          cwd: options.cwd,
-          env,
-        })
-
-        sessions.set(options.session, session)
-
-        if (options.wait) {
-          await session.waitForData({ timeout: options.timeout })
-        }
-
-        ctx.stdout = `Session "${options.session}" started`
-        logger.log(`Session "${options.session}" started: ${command}`)
-      } catch (e) {
-        ctx.stderr = `Failed to launch: ${(e as Error).message}`
-        ctx.exitCode = 1
       }
+
+      ctx.stdout = `Session "${options.session}" started`
+      logger.log(`Session "${options.session}" started: ${command}`)
     })
 
   cli
@@ -257,40 +292,31 @@ function createCliWithActions(
         return
       }
 
-      try {
-        const only: Record<string, boolean | string> = {}
-        if (options.bold) {
-          only.bold = true
-        }
-        if (options.italic) {
-          only.italic = true
-        }
-        if (options.underline) {
-          only.underline = true
-        }
-        if (options.fg) {
-          only.foreground = options.fg
-        }
-        if (options.bg) {
-          only.background = options.bg
-        }
+      const only: Record<string, boolean | string> = {}
+      if (options.bold) only.bold = true
+      if (options.italic) only.italic = true
+      if (options.underline) only.underline = true
+      if (options.fg) only.foreground = options.fg
+      if (options.bg) only.background = options.bg
 
-        const text = await session.text({
+      const text = await errore.tryAsync({
+        try: () => session.text({
           trimEnd: options.trim,
           immediate: options.immediate,
           showCursor: options.cursor,
           only: Object.keys(only).length > 0 ? only as any : undefined,
-        })
-
-        if (options.json) {
-          ctx.stdout = JSON.stringify({ text, session: sessionName })
-        } else {
-          ctx.stdout = text
-        }
-      } catch (e) {
-        ctx.stderr = `Failed to get snapshot: ${(e as Error).message}`
+        }),
+        catch: (e) => new SessionCommandError({ operation: 'snapshot', session: sessionName, reason: errorReason(e), cause: e }),
+      })
+      if (text instanceof Error) {
+        ctx.stderr = text.message
         ctx.exitCode = 1
+        return
       }
+
+      ctx.stdout = options.json
+        ? JSON.stringify({ text, session: sessionName })
+        : text
     })
 
   cli
@@ -349,40 +375,47 @@ function createCliWithActions(
       const session = getSession(sessionName)
       if (!session) return
 
-      try {
-        // Wait for idle unless --immediate
-        if (!options.immediate) {
-          await session.text({ immediate: false, timeout: 2000 })
+      // Wait for idle unless --immediate
+      if (!options.immediate) {
+        const idle = await errore.tryAsync({
+          try: () => session.text({ immediate: false, timeout: 2000 }),
+          catch: (e) => new SessionCommandError({ operation: 'screenshot', session: sessionName, reason: errorReason(e), cause: e }),
+        })
+        if (idle instanceof Error) {
+          ctx.stderr = idle.message
+          ctx.exitCode = 1
+          return
         }
+      }
 
-        const data = session.getTerminalData()
+      const data = session.getTerminalData()
+      const { renderTerminalToImage } = await import('ghostty-opentui/image')
 
-        const { renderTerminalToImage } = await import('ghostty-opentui/image')
-
-        const image = await renderTerminalToImage(data, {
+      const image = await errore.tryAsync({
+        try: () => renderTerminalToImage(data, {
           width: options.width,
           fontSize: options.fontSize,
           lineHeight: options.lineHeight,
-          theme: {
-            background: options.background,
-            text: options.foreground,
-          },
+          theme: { background: options.background, text: options.foreground },
           format: options.format,
           quality: options.quality,
-        })
-
-        const { writeFileSync } = await import('fs')
-        const outputPath = options.output ?? (await import('path')).join(
-          (await import('os')).tmpdir(),
-          `tuistory-screenshot-${Date.now()}.${options.format}`,
-        )
-
-        writeFileSync(outputPath, image)
-        ctx.stdout = outputPath
-      } catch (e) {
-        ctx.stderr = `Failed to take screenshot: ${(e as Error).message}`
+        }),
+        catch: (e) => new SessionCommandError({ operation: 'screenshot', session: sessionName, reason: errorReason(e), cause: e }),
+      })
+      if (image instanceof Error) {
+        ctx.stderr = image.message
         ctx.exitCode = 1
+        return
       }
+
+      const outputPath = options.output ?? path.join(os.tmpdir(), `tuistory-screenshot-${Date.now()}.${options.format}`)
+      const written = errore.try(() => fs.writeFileSync(outputPath, image))
+      if (written instanceof Error) {
+        ctx.stderr = new SessionCommandError({ operation: 'screenshot', session: sessionName, reason: errorReason(written), cause: written }).message
+        ctx.exitCode = 1
+        return
+      }
+      ctx.stdout = outputPath
     })
 
   cli
@@ -414,13 +447,16 @@ function createCliWithActions(
         return
       }
 
-      try {
-        await session.type(text)
-        ctx.stdout = 'OK'
-      } catch (e) {
-        ctx.stderr = `Failed to type: ${(e as Error).message}`
+      const result = await errore.tryAsync({
+        try: () => session.type(text),
+        catch: (e) => new SessionCommandError({ operation: 'type', session: sessionName, reason: errorReason(e), cause: e }),
+      })
+      if (result instanceof Error) {
+        ctx.stderr = result.message
         ctx.exitCode = 1
+        return
       }
+      ctx.stdout = 'OK'
     })
 
   cli
@@ -460,20 +496,23 @@ function createCliWithActions(
         return
       }
 
-      try {
-        const allKeys = [key, ...keys]
-        const invalidKeys = allKeys.filter((k) => !isValidKey(k))
-        if (invalidKeys.length > 0) {
-          ctx.stderr = `Invalid key(s): ${invalidKeys.join(', ')}\nValid keys: ${Array.from(VALID_KEYS).sort().join(', ')}`
-          ctx.exitCode = 1
-          return
-        }
-        await session.press(allKeys as Key[])
-        ctx.stdout = 'OK'
-      } catch (e) {
-        ctx.stderr = `Failed to press: ${(e as Error).message}`
+      const allKeys = [key, ...keys]
+      const invalidKeys = allKeys.filter((k) => !isValidKey(k))
+      if (invalidKeys.length > 0) {
+        ctx.stderr = `Invalid key(s): ${invalidKeys.join(', ')}\nValid keys: ${Array.from(VALID_KEYS).sort().join(', ')}`
         ctx.exitCode = 1
+        return
       }
+      const result = await errore.tryAsync({
+        try: () => session.press(allKeys as Key[]),
+        catch: (e) => new SessionCommandError({ operation: 'press', session: sessionName, reason: errorReason(e), cause: e }),
+      })
+      if (result instanceof Error) {
+        ctx.stderr = result.message
+        ctx.exitCode = 1
+        return
+      }
+      ctx.stdout = 'OK'
     })
 
   cli
@@ -515,17 +554,17 @@ function createCliWithActions(
         return
       }
 
-      try {
-        const parsedPattern = parsePattern(pattern)
-        await session.click(parsedPattern, {
-          first: options.first,
-          timeout: options.timeout,
-        })
-        ctx.stdout = 'OK'
-      } catch (e) {
-        ctx.stderr = `Failed to click: ${(e as Error).message}`
+      const parsedPattern = parsePattern(pattern)
+      const result = await errore.tryAsync({
+        try: () => session.click(parsedPattern, { first: options.first, timeout: options.timeout }),
+        catch: (e) => new SessionCommandError({ operation: 'click', session: sessionName, reason: errorReason(e), cause: e }),
+      })
+      if (result instanceof Error) {
+        ctx.stderr = result.message
         ctx.exitCode = 1
+        return
       }
+      ctx.stdout = 'OK'
     })
 
   cli
@@ -556,13 +595,16 @@ function createCliWithActions(
         return
       }
 
-      try {
-        await session.clickAt(Number(x), Number(y))
-        ctx.stdout = 'OK'
-      } catch (e) {
-        ctx.stderr = `Failed to click: ${(e as Error).message}`
+      const result = await errore.tryAsync({
+        try: () => session.clickAt(Number(x), Number(y)),
+        catch: (e) => new SessionCommandError({ operation: 'click-at', session: sessionName, reason: errorReason(e), cause: e }),
+      })
+      if (result instanceof Error) {
+        ctx.stderr = result.message
         ctx.exitCode = 1
+        return
       }
+      ctx.stdout = 'OK'
     })
 
   cli
@@ -600,16 +642,17 @@ function createCliWithActions(
         return
       }
 
-      try {
-        const parsedPattern = parsePattern(pattern)
-        await session.waitForText(parsedPattern, {
-          timeout: options.timeout,
-        })
-        ctx.stdout = 'OK'
-      } catch (e) {
-        ctx.stderr = `Failed to wait: ${(e as Error).message}`
+      const parsedPattern = parsePattern(pattern)
+      const result = await errore.tryAsync({
+        try: () => session.waitForText(parsedPattern, { timeout: options.timeout }),
+        catch: (e) => new SessionCommandError({ operation: 'wait', session: sessionName, reason: errorReason(e), cause: e }),
+      })
+      if (result instanceof Error) {
+        ctx.stderr = result.message
         ctx.exitCode = 1
+        return
       }
+      ctx.stdout = 'OK'
     })
 
   cli
@@ -639,13 +682,16 @@ function createCliWithActions(
         return
       }
 
-      try {
-        await session.waitIdle({ timeout: options.timeout })
-        ctx.stdout = 'OK'
-      } catch (e) {
-        ctx.stderr = `Failed to wait: ${(e as Error).message}`
+      const result = await errore.tryAsync({
+        try: () => session.waitIdle({ timeout: options.timeout }),
+        catch: (e) => new SessionCommandError({ operation: 'wait-idle', session: sessionName, reason: errorReason(e), cause: e }),
+      })
+      if (result instanceof Error) {
+        ctx.stderr = result.message
         ctx.exitCode = 1
+        return
       }
+      ctx.stdout = 'OK'
     })
 
   cli
@@ -682,25 +728,26 @@ function createCliWithActions(
         return
       }
 
-      try {
-        const lineCount = lines ? Number(lines) : 1
-        const x = options.x ? Number(options.x) : undefined
-        const y = options.y ? Number(options.y) : undefined
+      const lineCount = lines ? Number(lines) : 1
+      const x = options.x ? Number(options.x) : undefined
+      const y = options.y ? Number(options.y) : undefined
 
-        if (direction === 'up') {
-          await session.scrollUp(lineCount, x, y)
-        } else if (direction === 'down') {
-          await session.scrollDown(lineCount, x, y)
-        } else {
-          ctx.stderr = `Invalid direction: ${direction}. Use "up" or "down"`
-          ctx.exitCode = 1
-          return
-        }
-        ctx.stdout = 'OK'
-      } catch (e) {
-        ctx.stderr = `Failed to scroll: ${(e as Error).message}`
+      if (direction !== 'up' && direction !== 'down') {
+        ctx.stderr = `Invalid direction: ${direction}. Use "up" or "down"`
         ctx.exitCode = 1
+        return
       }
+
+      const result = await errore.tryAsync({
+        try: () => direction === 'up' ? session.scrollUp(lineCount, x, y) : session.scrollDown(lineCount, x, y),
+        catch: (e) => new SessionCommandError({ operation: 'scroll', session: sessionName, reason: errorReason(e), cause: e }),
+      })
+      if (result instanceof Error) {
+        ctx.stderr = result.message
+        ctx.exitCode = 1
+        return
+      }
+      ctx.stdout = 'OK'
     })
 
   cli
@@ -731,13 +778,13 @@ function createCliWithActions(
         return
       }
 
-      try {
-        session.resize({ cols: Number(cols), rows: Number(rows) })
-        ctx.stdout = 'OK'
-      } catch (e) {
-        ctx.stderr = `Failed to resize: ${(e as Error).message}`
+      const result = errore.try(() => session.resize({ cols: Number(cols), rows: Number(rows) }))
+      if (result instanceof Error) {
+        ctx.stderr = new SessionCommandError({ operation: 'resize', session: sessionName, reason: result.message, cause: result }).message
         ctx.exitCode = 1
+        return
       }
+      ctx.stdout = 'OK'
     })
 
   cli
@@ -771,23 +818,23 @@ function createCliWithActions(
         return
       }
 
-      try {
-        const allKeys = [key, ...keys]
-        const invalidKeys = allKeys.filter((k) => !isValidKey(k))
-        if (invalidKeys.length > 0) {
-          ctx.stderr = `Invalid key(s): ${invalidKeys.join(', ')}\nValid keys: ${Array.from(VALID_KEYS).sort().join(', ')}`
-          ctx.exitCode = 1
-          return
-        }
-        const frames = await session.captureFrames(allKeys as Key[], {
-          frameCount: options.count,
-          intervalMs: options.interval,
-        })
-        ctx.stdout = JSON.stringify(frames)
-      } catch (e) {
-        ctx.stderr = `Failed to capture frames: ${(e as Error).message}`
+      const allKeys = [key, ...keys]
+      const invalidKeys = allKeys.filter((k) => !isValidKey(k))
+      if (invalidKeys.length > 0) {
+        ctx.stderr = `Invalid key(s): ${invalidKeys.join(', ')}\nValid keys: ${Array.from(VALID_KEYS).sort().join(', ')}`
         ctx.exitCode = 1
+        return
       }
+      const frames = await errore.tryAsync({
+        try: () => session.captureFrames(allKeys as Key[], { frameCount: options.count, intervalMs: options.interval }),
+        catch: (e) => new SessionCommandError({ operation: 'capture-frames', session: sessionName, reason: errorReason(e), cause: e }),
+      })
+      if (frames instanceof Error) {
+        ctx.stderr = frames.message
+        ctx.exitCode = 1
+        return
+      }
+      ctx.stdout = JSON.stringify(frames)
     })
 
   cli
@@ -810,15 +857,15 @@ function createCliWithActions(
         return
       }
 
-      try {
-        session.close()
-        sessions.delete(sessionName)
-        ctx.stdout = `Session "${sessionName}" closed`
-        logger.log(`Session "${sessionName}" closed`)
-      } catch (e) {
-        ctx.stderr = `Failed to close: ${(e as Error).message}`
+      const closed = errore.try(() => session.close())
+      if (closed instanceof Error) {
+        ctx.stderr = new SessionCommandError({ operation: 'close', session: sessionName, reason: closed.message, cause: closed }).message
         ctx.exitCode = 1
+        return
       }
+      sessions.delete(sessionName)
+      ctx.stdout = `Session "${sessionName}" closed`
+      logger.log(`Session "${sessionName}" closed`)
     })
 
   cli
@@ -898,18 +945,22 @@ function createCliWithActions(
 
 // Get relay server version (null if not running)
 async function getRelayVersion(): Promise<string | null> {
-  try {
-    const response = await fetch(`http://127.0.0.1:${RELAY_PORT}/version`, {
+  const response = await errore.tryAsync({
+    try: () => fetch(`http://127.0.0.1:${RELAY_PORT}/version`, {
       signal: AbortSignal.timeout(500),
-    })
-    if (!response.ok) {
-      return null
-    }
-    const data = await response.json() as { version: string }
-    return data.version
-  } catch {
-    return null
-  }
+    }),
+    catch: (e) => new RelayConnectionError({ port: String(RELAY_PORT), reason: 'connection refused or timeout', cause: e }),
+  })
+  if (response instanceof Error) return null
+  if (!response.ok) return null
+
+  const data = await errore.tryAsync({
+    try: () => response.json() as Promise<{ version: string }>,
+    catch: (e) => new RelayConnectionError({ port: String(RELAY_PORT), reason: 'invalid JSON response', cause: e }),
+  })
+  if (data instanceof Error) return null
+
+  return data.version
 }
 
 // Compare two semver versions
@@ -932,59 +983,52 @@ function compareVersions(v1: string, v2: string): number {
 // Kill relay server using PID file (SIGTERM for graceful shutdown).
 // Escalates to SIGKILL if SIGTERM doesn't work, then falls back to kill-port-process.
 async function killRelay(): Promise<void> {
-  let pid: number | null = null
-  let processExited = false
+  const raw = errore.try(() => fs.readFileSync(PID_FILE, 'utf-8'))
+  const pid = raw instanceof Error ? null : (() => {
+    const n = Number(raw.trim())
+    return isNaN(n) || n <= 0 ? null : n
+  })()
 
-  // Try PID-based kill first (graceful SIGTERM)
-  try {
-    pid = Number(fs.readFileSync(PID_FILE, 'utf-8').trim())
-    if (isNaN(pid) || pid <= 0) pid = null
-  } catch {
-    // PID file missing
-  }
-
-  if (pid !== null) {
-    try {
-      process.kill(pid, 'SIGTERM')
-      // Wait for process to exit (up to 3s)
-      const start = Date.now()
-      while (Date.now() - start < 3000) {
-        try {
-          process.kill(pid, 0) // Check if still alive
-          await new Promise((r) => setTimeout(r, 100))
-        } catch {
-          processExited = true
-          break
-        }
-      }
-
-      // Escalate to SIGKILL if SIGTERM didn't work
-      if (!processExited) {
-        try {
-          process.kill(pid, 'SIGKILL')
-          processExited = true
-        } catch {
-          processExited = true // Already dead
-        }
-      }
-    } catch {
-      // Process doesn't exist (stale PID file)
-      processExited = true
-    }
-  }
+  const processExited = pid !== null
+    ? await killProcessByPid(pid)
+    : false
 
   // Fallback: kill by port if PID-based kill didn't work or PID file was missing
   if (!processExited) {
-    try {
-      const { killPortProcess } = await import('kill-port-process')
-      await killPortProcess(RELAY_PORT)
-    } catch {
-      // Ignore errors
+    const portKill = await errore.tryAsync({
+      try: async () => {
+        const { killPortProcess } = await import('kill-port-process')
+        await killPortProcess(RELAY_PORT)
+      },
+      catch: (e) => new PidFileError({ path: String(RELAY_PORT), reason: 'port-based kill failed', cause: e }),
+    })
+    if (portKill instanceof Error) {
+      // Both PID and port-based kill failed — daemon may already be dead
     }
   }
 
   // Clean up PID file
-  try { fs.unlinkSync(PID_FILE) } catch {}
+  errore.try(() => fs.unlinkSync(PID_FILE))
+}
+
+// Send SIGTERM to a PID, wait up to 3s, escalate to SIGKILL if needed.
+// Returns true if the process exited, false if it couldn't be killed.
+async function killProcessByPid(pid: number): Promise<boolean> {
+  const sendResult = errore.try(() => process.kill(pid, 'SIGTERM'))
+  if (sendResult instanceof Error) return true // Process doesn't exist (stale PID)
+
+  // Wait for process to exit (up to 3s)
+  const start = Date.now()
+  while (Date.now() - start < 3000) {
+    const alive = errore.try(() => process.kill(pid, 0))
+    if (alive instanceof Error) return true // Process exited
+    await new Promise((r) => setTimeout(r, 100))
+  }
+
+  // Escalate to SIGKILL if SIGTERM didn't work
+  errore.try(() => process.kill(pid, 'SIGKILL'))
+  // SIGKILL always succeeds if process exists; if it throws, process is already dead
+  return true
 }
 
 // Acquire a file lock for daemon restart (prevents two clients racing to kill+restart).
@@ -993,56 +1037,45 @@ async function killRelay(): Promise<void> {
 const RESTART_LOCK_STALE_MS = 10000
 
 function acquireRestartLock(): boolean {
-  try {
-    if (!fs.existsSync(TUISTORY_DIR)) {
-      fs.mkdirSync(TUISTORY_DIR, { recursive: true })
-    }
-    fs.writeFileSync(RESTART_LOCK_FILE, `${process.pid}:${Date.now()}`, { flag: 'wx' })
-    return true
-  } catch {
-    // Lock file exists - check if stale (holder crashed)
-    try {
-      const content = fs.readFileSync(RESTART_LOCK_FILE, 'utf-8')
-      const [pidStr, tsStr] = content.split(':')
-      const lockPid = Number(pidStr)
-      const lockTime = Number(tsStr)
+  ensureTuistoryDir()
 
-      // Check if lock is stale: either too old or holder process is dead
-      let isStale = false
-      if (Date.now() - lockTime > RESTART_LOCK_STALE_MS) {
-        isStale = true
-      } else if (!isNaN(lockPid) && lockPid > 0) {
-        try {
-          process.kill(lockPid, 0) // Check if holder process is alive
-        } catch {
-          isStale = true // Holder process is dead
-        }
-      }
+  const created = errore.try(() => fs.writeFileSync(RESTART_LOCK_FILE, `${process.pid}:${Date.now()}`, { flag: 'wx' }))
+  if (!(created instanceof Error)) return true
 
-      if (isStale) {
-        try { fs.unlinkSync(RESTART_LOCK_FILE) } catch {}
-        // Retry once (non-recursive to avoid stack growth)
-        try {
-          fs.writeFileSync(RESTART_LOCK_FILE, `${process.pid}:${Date.now()}`, { flag: 'wx' })
-          return true
-        } catch {
-          return false
-        }
-      }
-    } catch {}
-    return false
-  }
+  // Lock file exists — check if stale (holder crashed)
+  const content = errore.try(() => fs.readFileSync(RESTART_LOCK_FILE, 'utf-8'))
+  if (content instanceof Error) return false
+
+  const [pidStr, tsStr] = content.split(':')
+  const lockPid = Number(pidStr)
+  const lockTime = Number(tsStr)
+
+  const isStale = Date.now() - lockTime > RESTART_LOCK_STALE_MS
+    || (!isNaN(lockPid) && lockPid > 0 && errore.try(() => process.kill(lockPid, 0)) instanceof Error)
+
+  if (!isStale) return false
+
+  // Stale lock — remove and retry once
+  errore.try(() => fs.unlinkSync(RESTART_LOCK_FILE))
+  const retried = errore.try(() => fs.writeFileSync(RESTART_LOCK_FILE, `${process.pid}:${Date.now()}`, { flag: 'wx' }))
+  return !(retried instanceof Error)
 }
 
 function releaseRestartLock(): void {
   // Only release if we own the lock (PID matches)
-  try {
-    const content = fs.readFileSync(RESTART_LOCK_FILE, 'utf-8')
-    const [pidStr] = content.split(':')
-    if (Number(pidStr) === process.pid) {
-      fs.unlinkSync(RESTART_LOCK_FILE)
-    }
-  } catch {}
+  const content = errore.try(() => fs.readFileSync(RESTART_LOCK_FILE, 'utf-8'))
+  if (content instanceof Error) return
+
+  const [pidStr] = content.split(':')
+  if (Number(pidStr) === process.pid) {
+    errore.try(() => fs.unlinkSync(RESTART_LOCK_FILE))
+  }
+}
+
+function ensureTuistoryDir(): void {
+  if (!fs.existsSync(TUISTORY_DIR)) {
+    errore.try(() => fs.mkdirSync(TUISTORY_DIR, { recursive: true }))
+  }
 }
 
 // Wait for relay server to start. If minVersion is provided, waits until the
@@ -1082,11 +1115,19 @@ async function startRelayServer() {
     const ctx: CommandResult = { stdout: '', stderr: '', exitCode: 0 }
     const cli = createCliWithActions(ctx, sessions, logger)
 
-    try {
-      cli.parse(argv, { run: false })
-      await cli.runMatchedCommand()
-    } catch (e) {
-      ctx.stderr = (e as Error).message
+    const parsed = errore.try(() => cli.parse(argv, { run: false }))
+    if (parsed instanceof Error) {
+      ctx.stderr = parsed.message
+      ctx.exitCode = 1
+      return c.json(ctx)
+    }
+
+    const ran = await errore.tryAsync({
+      try: () => cli.runMatchedCommand(),
+      catch: (e) => new Error(errorReason(e), { cause: e }),
+    })
+    if (ran instanceof Error) {
+      ctx.stderr = ran.message
       ctx.exitCode = 1
     }
 
@@ -1100,12 +1141,11 @@ async function startRelayServer() {
   })
 
   // Write PID file so killRelay() can send SIGTERM instead of kill-by-port
-  try {
-    if (!fs.existsSync(TUISTORY_DIR)) {
-      fs.mkdirSync(TUISTORY_DIR, { recursive: true })
-    }
-    fs.writeFileSync(PID_FILE, String(process.pid))
-  } catch {}
+  ensureTuistoryDir()
+  const pidWrite = errore.try(() => fs.writeFileSync(PID_FILE, String(process.pid)))
+  if (pidWrite instanceof Error) {
+    logger.error(`Failed to write PID file: ${pidWrite.message}`)
+  }
 
   logger.log(`Relay server started on port ${RELAY_PORT}`)
   logger.log(`Version: ${VERSION}`)
@@ -1114,11 +1154,11 @@ async function startRelayServer() {
   const gracefulShutdown = (signal: string) => {
     logger.log(`Relay server shutting down (${signal})`)
     for (const [name, session] of sessions) {
-      session.close()
+      errore.try(() => session.close())
       logger.log(`Session "${name}" closed on shutdown`)
     }
     sessions.clear()
-    try { fs.unlinkSync(PID_FILE) } catch {}
+    errore.try(() => fs.unlinkSync(PID_FILE))
     server.close()
     process.exit(0)
   }
@@ -1182,7 +1222,9 @@ async function runCliClient() {
 
     const started = await waitForRelay()
     if (!started) {
-      console.error(pc.red(`Failed to start relay server. Check logs at: ${LOG_FILE_PATH}`))
+      const err = new RelayStartError({ action: 'start', reason: `timed out waiting for relay on port ${RELAY_PORT}` })
+      console.error(pc.red(err.message))
+      console.error(pc.red(`Check logs at: ${LOG_FILE_PATH}`))
       process.exit(1)
     }
   } else if (serverVersion !== VERSION) {
@@ -1208,7 +1250,9 @@ async function runCliClient() {
 
             const started = await waitForRelay(5000, VERSION)
             if (!started) {
-              console.error(pc.red(`Failed to restart relay server. Check logs at: ${LOG_FILE_PATH}`))
+              const err = new RelayStartError({ action: 'restart', reason: `timed out waiting for relay v${VERSION} on port ${RELAY_PORT}` })
+              console.error(pc.red(err.message))
+              console.error(pc.red(`Check logs at: ${LOG_FILE_PATH}`))
               process.exit(1)
             }
           }
@@ -1220,7 +1264,9 @@ async function runCliClient() {
         // timeout (10s) to give the lock holder time to finish restarting
         const started = await waitForRelay(15000, VERSION)
         if (!started) {
-          console.error(pc.red(`Failed to connect to relay server after restart. Check logs at: ${LOG_FILE_PATH}`))
+          const err = new RelayStartError({ action: 'restart', reason: `timed out waiting for relay v${VERSION} after another client restarted it` })
+          console.error(pc.red(err.message))
+          console.error(pc.red(`Check logs at: ${LOG_FILE_PATH}`))
           process.exit(1)
         }
       }
@@ -1229,28 +1275,37 @@ async function runCliClient() {
   }
 
   // Forward argv to relay
-  try {
-    const response = await fetch(`http://127.0.0.1:${RELAY_PORT}/cli`, {
+  const response = await errore.tryAsync({
+    try: () => fetch(`http://127.0.0.1:${RELAY_PORT}/cli`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ argv: process.argv }),
-    })
-
-    const result = await response.json() as CommandResult
-
-    if (result.stdout) {
-      console.log(result.stdout)
-    }
-    if (result.stderr) {
-      console.error(pc.red(result.stderr))
-    }
-
-    process.exit(result.exitCode)
-  } catch (e) {
-    console.error(pc.red(`Failed to connect to relay: ${(e as Error).message}`))
+    }),
+    catch: (e) => new RelayConnectionError({ port: String(RELAY_PORT), reason: errorReason(e), cause: e }),
+  })
+  if (response instanceof Error) {
+    console.error(pc.red(response.message))
     console.error(pc.red(`Check logs at: ${LOG_FILE_PATH}`))
     process.exit(1)
   }
+
+  const result = await errore.tryAsync({
+    try: () => response.json() as Promise<CommandResult>,
+    catch: (e) => new RelayConnectionError({ port: String(RELAY_PORT), reason: 'invalid response from relay', cause: e }),
+  })
+  if (result instanceof Error) {
+    console.error(pc.red(result.message))
+    process.exit(1)
+  }
+
+  if (result.stdout) {
+    console.log(result.stdout)
+  }
+  if (result.stderr) {
+    console.error(pc.red(result.stderr))
+  }
+
+  process.exit(result.exitCode)
 }
 
 // Main entry point
