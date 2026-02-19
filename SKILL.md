@@ -87,8 +87,8 @@ import { launchTerminal } from 'tuistory'
 const session = await launchTerminal({
   command: 'my-cli',
   args: ['--flag'],
-  cols: 80,
-  rows: 24,
+  cols: 120,
+  rows: 36,
   cwd: '/path/to/dir',
   env: { MY_VAR: 'value' },
 })
@@ -133,8 +133,8 @@ test('my CLI shows help', async () => {
   const session = await launchTerminal({
     command: 'my-cli',
     args: ['--help'],
-    cols: 80,
-    rows: 24,
+    cols: 120,
+    rows: 36,
   })
 
   const text = await session.text({ trimEnd: true })
@@ -196,8 +196,8 @@ This observe-act-observe loop lets you progressively explore any TUI. Each inlin
 test('opencode shows welcome', async () => {
   const session = await launchTerminal({
     command: 'opencode',
-    cols: 100,
-    rows: 30,
+    cols: 150,
+    rows: 45,
   })
 
   await session.waitForText('switch agent', { timeout: 15000 })
@@ -223,8 +223,8 @@ test('node debugger inspect variables', async () => {
   const session = await launchTerminal({
     command: 'node',
     args: ['inspect', 'app.js'],
-    cols: 100,
-    rows: 30,
+    cols: 150,
+    rows: 45,
   })
 
   await session.waitForText('Break on start', { timeout: 10000 })

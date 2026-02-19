@@ -31,7 +31,7 @@ tuistory provides a CLI for interacting with terminal sessions from the command 
 
 ```bash
 # Launch Claude Code
-tuistory launch "claude" -s claude --cols 100 --rows 30
+tuistory launch "claude" -s claude --cols 150 --rows 45
 
 # Wait for it to load
 tuistory -s claude wait "Claude Code" --timeout 15000
@@ -65,7 +65,7 @@ tuistory -s claude close
 
 ```bash
 # Launch Node.js debugger (assuming app.js has a debugger statement)
-tuistory launch "node inspect app.js" -s debug --cols 80
+tuistory launch "node inspect app.js" -s debug --cols 120
 
 # Wait for debugger to start and continue to breakpoint
 tuistory -s debug wait "Break on start"
@@ -118,8 +118,8 @@ tuistory daemon-stop          # Stop the background daemon
 
 ```bash
 -s, --session <name>  # Session name (required for most commands)
---cols <n>            # Terminal columns (default: 80)
---rows <n>            # Terminal rows (default: 24)
+--cols <n>            # Terminal columns (default: 120)
+--rows <n>            # Terminal rows (default: 36)
 --env <key=value>     # Environment variable (repeatable)
 --timeout <ms>        # Wait timeout in milliseconds
 --trim                # Trim whitespace from snapshot
@@ -174,8 +174,8 @@ import { launchTerminal } from 'tuistory'
 const session = await launchTerminal({
   command: 'claude',
   args: [],
-  cols: 100,
-  rows: 30,
+  cols: 150,
+  rows: 45,
 })
 
 await session.waitForText('claude', { timeout: 10000 })
@@ -219,8 +219,8 @@ Launch a terminal session.
 const session = await launchTerminal({
   command: 'my-cli',
   args: ['--flag'],
-  cols: 80,
-  rows: 24,
+  cols: 120,
+  rows: 36,
   cwd: '/path/to/dir',
   env: { MY_VAR: 'value' },
 })

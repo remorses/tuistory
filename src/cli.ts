@@ -167,14 +167,14 @@ function createCliWithActions(
       or login prompts you need to handle.
     `)
     .option('-s, --session <name>', z.string().default('default').describe('Session name'))
-    .option('--cols <n>', z.number().default(80).describe('Terminal columns'))
-    .option('--rows <n>', z.number().default(24).describe('Terminal rows'))
+    .option('--cols <n>', z.number().default(120).describe('Terminal columns'))
+    .option('--rows <n>', z.number().default(36).describe('Terminal rows'))
     .option('--cwd <path>', 'Working directory')
     .option('--env <key=value>', z.array(z.string()).describe('Environment variable (repeatable)'))
     .option('--no-wait', "Don't wait for initial data")
     .option('--timeout <ms>', z.number().default(5000).describe('Wait timeout in milliseconds'))
-    .example('tuistory launch "claude" -s claude --cols 120 --rows 30')
-    .example('tuistory launch "node" -s repl --cols 80')
+    .example('tuistory launch "claude" -s claude --cols 150 --rows 45')
+    .example('tuistory launch "node" -s repl --cols 120')
     .example('tuistory launch "bash --norc" -s sh --env PS1="$ " --env FOO=bar')
     .example(dedent`
       # Launch and immediately check what the app shows:
@@ -928,7 +928,7 @@ function createCliWithActions(
   // Global examples showing the full workflow pattern
   cli.example(dedent`
     # Full workflow: launch, interact, snapshot, close
-    tuistory launch "claude" -s ai --cols 100 --rows 30
+    tuistory launch "claude" -s ai --cols 150 --rows 45
     tuistory -s ai wait "Claude" --timeout 15000
     tuistory -s ai type "what is 2+2?"
     tuistory -s ai press enter

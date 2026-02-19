@@ -185,8 +185,8 @@ export class Session {
   private showCursor: boolean
 
   constructor(options: LaunchOptions) {
-    this.cols = options.cols ?? 80
-    this.rows = options.rows ?? 24
+    this.cols = options.cols ?? 120
+    this.rows = options.rows ?? 36
     this.showCursor = options.showCursor ?? false
     this.sessionCwd = options.cwd ?? process.cwd()
 

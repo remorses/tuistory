@@ -85,8 +85,8 @@ Commands:
                                   the initial terminal state — many apps show first-run dialogs
                                   or login prompts you need to handle.
     -s, --session <name>          Session name (default: default)
-    --cols <n>                    Terminal columns (default: 80)
-    --rows <n>                    Terminal rows (default: 24)
+    --cols <n>                    Terminal columns (default: 120)
+    --rows <n>                    Terminal rows (default: 36)
     --cwd <path>                  Working directory
     --env <key=value>             Environment variable (repeatable)
     --no-wait                     Don't wait for initial data
@@ -288,7 +288,7 @@ Options:
 
 Examples:
 # Full workflow: launch, interact, snapshot, close
-tuistory launch "claude" -s ai --cols 100 --rows 30
+tuistory launch "claude" -s ai --cols 150 --rows 45
 tuistory -s ai wait "Claude" --timeout 15000
 tuistory -s ai type "what is 2+2?"
 tuistory -s ai press enter
@@ -309,8 +309,8 @@ Usage:
 
 Options:
   -s, --session <name>  Session name (default: default)
-  --cols <n>            Terminal columns (default: 80)
-  --rows <n>            Terminal rows (default: 24)
+  --cols <n>            Terminal columns (default: 120)
+  --rows <n>            Terminal rows (default: 36)
   --cwd <path>          Working directory
   --env <key=value>     Environment variable (repeatable)
   --no-wait             Don't wait for initial data
@@ -333,8 +333,8 @@ Description:
   or login prompts you need to handle.
 
 Examples:
-tuistory launch "claude" -s claude --cols 120 --rows 30
-tuistory launch "node" -s repl --cols 80
+tuistory launch "claude" -s claude --cols 150 --rows 45
+tuistory launch "node" -s repl --cols 120
 tuistory launch "bash --norc" -s sh --env PS1="$ " --env FOO=bar
 # Launch and immediately check what the app shows:
 tuistory launch "claude" -s ai && tuistory -s ai snapshot --trim"
