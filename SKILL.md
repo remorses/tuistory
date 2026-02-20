@@ -50,7 +50,7 @@ bunx tuistory --help
 ```bash
 tuistory launch <command> -s <name> [--cols N] [--rows N] [--env KEY=VAL]
 tuistory -s <name> snapshot --trim
-tuistory -s <name> screenshot -o image.jpg
+tuistory -s <name> screenshot -o image.jpg --pixel-ratio 2
 tuistory -s <name> type "text"
 tuistory -s <name> press enter
 tuistory -s <name> press ctrl c
@@ -68,10 +68,11 @@ Always run `snapshot --trim` after every action to see the current terminal stat
 
 ### Screenshot for agent bots
 
-Capture terminal as an image to upload to users (Discord, Slack, web UIs):
+Capture terminal as an image to upload to users (Discord, Slack, web UIs).
+Use `--pixel-ratio 2` for sharp images on social media and messaging apps:
 
 ```bash
-tuistory -s myapp screenshot -o /tmp/terminal.jpg
+tuistory -s myapp screenshot -o /tmp/terminal.jpg --pixel-ratio 2
 # then upload /tmp/terminal.jpg to the user
 ```
 
@@ -111,7 +112,7 @@ await session.waitForText(/Loading\.\.\./, { timeout: 5000 })
 // screenshot to image
 const data = session.getTerminalData()
 const { renderTerminalToImage } = await import('ghostty-opentui/image')
-const image = await renderTerminalToImage(data, { format: 'jpeg' })
+const image = await renderTerminalToImage(data, { format: 'jpeg', devicePixelRatio: 2 })
 
 // cleanup
 session.close()

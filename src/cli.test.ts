@@ -131,6 +131,7 @@ Commands:
                                   TUI applications and share them with users via messaging
                                   apps. Bots like kimaki or openclaw can show users live
                                   progress of terminal commands by uploading the image.
+                                  Use \`--pixel-ratio 2\` for sharp images on social media and sharing.
                                   
                                   **Important:** Screenshots are expensive. Always use
                                   \`snapshot\` or \`wait\` first to confirm the content is on
@@ -152,6 +153,7 @@ Commands:
     --foreground <color>          Text color (default: #c0caf5)
     --format <fmt>                Image format (default: jpeg)
     --quality <n>                 Quality for lossy formats (0-100) (default: 90)
+    --pixel-ratio <n>             Device pixel ratio for HiDPI rendering (default: 1)
     --immediate                   Don't wait for idle state
 
   type <text>                     Type text into the terminal character by character.

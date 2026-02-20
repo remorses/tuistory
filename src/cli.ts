@@ -331,6 +331,7 @@ function createCliWithActions(
       TUI applications and share them with users via messaging
       apps. Bots like kimaki or openclaw can show users live
       progress of terminal commands by uploading the image.
+      Use \`--pixel-ratio 2\` for sharp images on social media and sharing.
 
       **Important:** Screenshots are expensive. Always use
       \`snapshot\` or \`wait\` first to confirm the content is on
@@ -353,8 +354,9 @@ function createCliWithActions(
     .option('--foreground <color>', z.string().default('#c0caf5').describe('Text color'))
     .option('--format <fmt>', z.enum(['jpeg', 'png', 'webp']).default('jpeg').describe('Image format'))
     .option('--quality <n>', z.number().default(90).describe('Quality for lossy formats (0-100)'))
+    .option('--pixel-ratio <n>', z.number().default(1).describe('Device pixel ratio for HiDPI rendering'))
     .option('--immediate', "Don't wait for idle state")
-    .example('tuistory -s claude screenshot -o screenshot.jpg')
+    .example('tuistory -s claude screenshot -o screenshot.jpg --pixel-ratio 2')
     .example('tuistory -s claude screenshot --format png --font-size 20')
     .example('tuistory -s claude screenshot --background "#ffffff" --foreground "#24292e"')
     .action(async (options: {
@@ -367,6 +369,7 @@ function createCliWithActions(
       foreground: string
       format: 'jpeg' | 'png' | 'webp'
       quality: number
+      pixelRatio: number
       immediate?: boolean
     }) => {
       const sessionName = requireSession(options)
@@ -399,6 +402,7 @@ function createCliWithActions(
           theme: { background: options.background, text: options.foreground },
           format: options.format,
           quality: options.quality,
+          devicePixelRatio: options.pixelRatio,
         }),
         catch: (e) => new SessionCommandError({ operation: 'screenshot', session: sessionName, reason: errorReason(e), cause: e }),
       })

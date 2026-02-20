@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.15
+
+- Add `--pixel-ratio <n>` flag to `screenshot` command for HiDPI rendering (use `--pixel-ratio 2` for sharp images on social media and messaging apps)
+- Increase default terminal cols/rows while preserving 10:3 aspect ratio for better readability
+- Fix: clean up auto termcast sqlite files on session close to prevent leftover temp files
+- Fix: harden daemon against session loss from restarts and crashes
+- Fix: isolate test daemon from user sessions via `TUISTORY_PORT` env var to prevent test runs from killing active sessions
+- Refactor CLI error handling to use errore (errors as values pattern)
+
 ## 0.0.14
 
 - Add `screenshot` CLI command that renders the terminal buffer to a JPEG/PNG/WebP image — useful for AI agents to capture TUI screenshots and share them via messaging apps
