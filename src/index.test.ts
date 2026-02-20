@@ -560,6 +560,50 @@ test('screenshot with PNG format', async () => {
   session.close()
 }, 15000)
 
+test('screenshot with pixel-ratio 2', async () => {
+  const session = await launchTerminal({
+    command: 'bash',
+    args: ['-c', 'printf "\\x1b[32mgreen\\x1b[0m \\x1b[1mbold\\x1b[0m normal\\n"'],
+    cols: 40,
+    rows: 5,
+  })
+
+  await session.text({ timeout: 2000 })
+
+  const data = session.getTerminalData()
+  const { renderTerminalToImage } = await import('ghostty-opentui/image')
+
+  // Render at 1x
+  const image1x = await renderTerminalToImage(data, { format: 'png', devicePixelRatio: 1 })
+  // Render at 2x
+  const image2x = await renderTerminalToImage(data, { format: 'png', devicePixelRatio: 2 })
+
+  const fs = await import('fs')
+  fs.mkdirSync('tmp', { recursive: true })
+  fs.writeFileSync('tmp/test-screenshot-1x.png', image1x)
+  fs.writeFileSync('tmp/test-screenshot-2x.png', image2x)
+
+  // 2x image should be larger in file size (more pixels)
+  console.log(`1x size: ${image1x.length} bytes`)
+  console.log(`2x size: ${image2x.length} bytes`)
+  expect(image2x.length).toBeGreaterThan(image1x.length)
+
+  // Read PNG dimensions from IHDR chunk (bytes 16-23)
+  const width1x = image1x.readUInt32BE(16)
+  const height1x = image1x.readUInt32BE(20)
+  const width2x = image2x.readUInt32BE(16)
+  const height2x = image2x.readUInt32BE(20)
+
+  console.log(`1x dimensions: ${width1x}x${height1x}`)
+  console.log(`2x dimensions: ${width2x}x${height2x}`)
+
+  // 2x should have double the pixel dimensions
+  expect(width2x).toBe(width1x * 2)
+  expect(height2x).toBe(height1x * 2)
+
+  session.close()
+}, 15000)
+
 test.skip('claude launch', async () => {
   const session = await launchTerminal({
     command: 'claude',
