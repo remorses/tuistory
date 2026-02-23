@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.16
+
+- Add `--padding <cells>` flag to `screenshot` command — frame padding in terminal cells (default: 2), converted to pixels based on font size
+- Add `--frame-color <color>` flag to `screenshot` command — sets the frame/padding area color; when omitted, auto-detected from terminal edge cells to match the app's background
+- Fix UTF-8 multi-byte character decoding across PTY data chunks using streaming `TextDecoder` — prevents garbled output for non-ASCII characters at chunk boundaries
+- Fix PTY tail flush on subprocess exit so the final bytes of output are always captured
+
 ## 0.0.15
 
 - Add `--pixel-ratio <n>` flag to `screenshot` command for HiDPI rendering (use `--pixel-ratio 2` for sharp images on social media and messaging apps)
