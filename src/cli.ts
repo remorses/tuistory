@@ -355,10 +355,13 @@ function createCliWithActions(
     .option('--format <fmt>', z.enum(['jpeg', 'png', 'webp']).default('jpeg').describe('Image format'))
     .option('--quality <n>', z.number().default(90).describe('Quality for lossy formats (0-100)'))
     .option('--pixel-ratio <n>', z.number().default(1).describe('Device pixel ratio for HiDPI rendering'))
+    .option('--padding <px>', z.number().min(0).default(0).describe('Frame padding in pixels (0 = no frame)'))
+    .option('--frame-color <color>', z.string().describe('Color of the frame/padding area (default: same as --background)'))
     .option('--immediate', "Don't wait for idle state")
     .example('tuistory -s claude screenshot -o screenshot.jpg --pixel-ratio 2')
     .example('tuistory -s claude screenshot --format png --font-size 20')
     .example('tuistory -s claude screenshot --background "#ffffff" --foreground "#24292e"')
+    .example('tuistory -s claude screenshot --padding 24 --frame-color "#ff6600"')
     .action(async (options: {
       session?: string
       output?: string
@@ -370,6 +373,8 @@ function createCliWithActions(
       format: 'jpeg' | 'png' | 'webp'
       quality: number
       pixelRatio: number
+      padding: number
+      frameColor?: string
       immediate?: boolean
     }) => {
       const sessionName = requireSession(options)
@@ -399,10 +404,13 @@ function createCliWithActions(
           width: options.width,
           fontSize: options.fontSize,
           lineHeight: options.lineHeight,
+          paddingX: options.padding,
+          paddingY: options.padding,
           theme: { background: options.background, text: options.foreground },
           format: options.format,
           quality: options.quality,
           devicePixelRatio: options.pixelRatio,
+          frameColor: options.frameColor,
         }),
         catch: (e) => new SessionCommandError({ operation: 'screenshot', session: sessionName, reason: errorReason(e), cause: e }),
       })
