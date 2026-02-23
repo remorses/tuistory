@@ -53,6 +53,8 @@ const __filename = fileURLToPath(import.meta.url)
 
 const packageJsonPath = path.join(path.dirname(__filename), '..', 'package.json')
 const VERSION = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8')).version as string
+const DEFAULT_SCREENSHOT_PADDING_CELLS = 2
+const MONOSPACE_CELL_WIDTH_FACTOR = 0.6
 
 // Logger utility
 interface Logger {
@@ -344,6 +346,10 @@ function createCliWithActions(
 
       Waits for the terminal to become idle before capturing unless
       \`--immediate\` is passed.
+
+      By default, screenshots include a 2-cell frame. If \`--frame-color\`
+      is not provided, the frame color is auto-detected from terminal edge
+      cells to match the app chrome/background.
     `)
     .option('-s, --session <name>', 'Session name (required)')
     .option('-o, --output <path>', 'Output file path (default: temp file)')
@@ -355,13 +361,13 @@ function createCliWithActions(
     .option('--format <fmt>', z.enum(['jpeg', 'png', 'webp']).default('jpeg').describe('Image format'))
     .option('--quality <n>', z.number().default(90).describe('Quality for lossy formats (0-100)'))
     .option('--pixel-ratio <n>', z.number().default(1).describe('Device pixel ratio for HiDPI rendering'))
-    .option('--padding <px>', z.number().min(0).default(0).describe('Frame padding in pixels (0 = no frame)'))
-    .option('--frame-color <color>', z.string().describe('Color of the frame/padding area (default: same as --background)'))
+    .option('--padding <cells>', z.number().min(0).default(DEFAULT_SCREENSHOT_PADDING_CELLS).describe('Frame padding in terminal cells (default: 2)'))
+    .option('--frame-color <color>', z.string().describe('Color of the frame/padding area (default: auto-detect from terminal edge colors)'))
     .option('--immediate', "Don't wait for idle state")
     .example('tuistory -s claude screenshot -o screenshot.jpg --pixel-ratio 2')
     .example('tuistory -s claude screenshot --format png --font-size 20')
     .example('tuistory -s claude screenshot --background "#ffffff" --foreground "#24292e"')
-    .example('tuistory -s claude screenshot --padding 24 --frame-color "#ff6600"')
+    .example('tuistory -s claude screenshot --padding 2 --frame-color "#ff6600"')
     .action(async (options: {
       session?: string
       output?: string
@@ -400,18 +406,22 @@ function createCliWithActions(
       const { renderTerminalToImage } = await import('ghostty-opentui/image')
 
       const image = await errore.tryAsync({
-        try: () => renderTerminalToImage(data, {
-          width: options.width,
-          fontSize: options.fontSize,
-          lineHeight: options.lineHeight,
-          paddingX: options.padding,
-          paddingY: options.padding,
-          theme: { background: options.background, text: options.foreground },
-          format: options.format,
-          quality: options.quality,
-          devicePixelRatio: options.pixelRatio,
-          frameColor: options.frameColor,
-        }),
+        try: () => {
+          const paddingPx = Math.round(options.padding * options.fontSize * MONOSPACE_CELL_WIDTH_FACTOR)
+          const renderOptions = {
+            width: options.width,
+            fontSize: options.fontSize,
+            lineHeight: options.lineHeight,
+            paddingX: paddingPx,
+            paddingY: paddingPx,
+            theme: { background: options.background, text: options.foreground },
+            format: options.format,
+            quality: options.quality,
+            devicePixelRatio: options.pixelRatio,
+            ...(options.frameColor ? { frameColor: options.frameColor } : {}),
+          }
+          return renderTerminalToImage(data, renderOptions)
+        },
         catch: (e) => new SessionCommandError({ operation: 'screenshot', session: sessionName, reason: errorReason(e), cause: e }),
       })
       if (image instanceof Error) {

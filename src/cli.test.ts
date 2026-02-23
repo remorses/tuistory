@@ -65,7 +65,7 @@ describe('CLI help and version', () => {
     const { stdout, exitCode } = await runCli(['--help'])
     expect(exitCode).toBe(0)
     expect(stdout).toMatchInlineSnapshot(`
-"tuistory/0.0.14
+"tuistory/0.0.15
 
 Usage:
   $ tuistory <command> [options]
@@ -144,6 +144,10 @@ Commands:
                                   
                                   Waits for the terminal to become idle before capturing unless
                                   \`--immediate\` is passed.
+                                  
+                                  By default, screenshots include a 2-cell frame. If \`--frame-color\`
+                                  is not provided, the frame color is auto-detected from terminal edge
+                                  cells to match the app chrome/background.
     -s, --session <name>          Session name (required)
     -o, --output <path>           Output file path (default: temp file)
     --width <px>                  Image width in pixels (auto from cols)
@@ -154,6 +158,8 @@ Commands:
     --format <fmt>                Image format (default: jpeg)
     --quality <n>                 Quality for lossy formats (0-100) (default: 90)
     --pixel-ratio <n>             Device pixel ratio for HiDPI rendering (default: 1)
+    --padding <cells>             Frame padding in terminal cells (default: 2) (default: 2)
+    --frame-color <color>         Color of the frame/padding area (default: auto-detect from terminal edge colors)
     --immediate                   Don't wait for idle state
 
   type <text>                     Type text into the terminal character by character.
@@ -304,7 +310,7 @@ tuistory -s ai close"
     const { stdout, exitCode } = await runCli(['launch', '--help'])
     expect(exitCode).toBe(0)
     expect(stdout).toMatchInlineSnapshot(`
-"tuistory/0.0.14
+"tuistory/0.0.15
 
 Usage:
   $ tuistory launch <command>

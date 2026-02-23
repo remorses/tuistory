@@ -26,7 +26,10 @@ export function spawn(command: string, args: string[], options: SpawnOptions): I
       cols: options.cols,
       rows: options.rows,
       data(_terminal, data) {
-        const text = decoder.decode(data)
+        const text = decoder.decode(data, { stream: true })
+        if (!text) {
+          return
+        }
         if (dataCallback) {
           dataCallback(text)
         } else {
@@ -35,6 +38,18 @@ export function spawn(command: string, args: string[], options: SpawnOptions): I
         }
       },
     },
+  })
+
+  subprocess.exited.then(() => {
+    const tail = decoder.decode()
+    if (!tail) {
+      return
+    }
+    if (dataCallback) {
+      dataCallback(tail)
+      return
+    }
+    dataBuffer.push(tail)
   })
 
   const terminal = subprocess.terminal!
