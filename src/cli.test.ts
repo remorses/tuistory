@@ -65,7 +65,7 @@ describe('CLI help and version', () => {
     const { stdout, exitCode } = await runCli(['--help'])
     expect(exitCode).toBe(0)
     expect(stdout).toMatchInlineSnapshot(`
-"tuistory/0.0.15
+"tuistory/0.0.16
 
 Usage:
   $ tuistory <command> [options]
@@ -310,7 +310,7 @@ tuistory -s ai close"
     const { stdout, exitCode } = await runCli(['launch', '--help'])
     expect(exitCode).toBe(0)
     expect(stdout).toMatchInlineSnapshot(`
-"tuistory/0.0.15
+"tuistory/0.0.16
 
 Usage:
   $ tuistory launch <command>

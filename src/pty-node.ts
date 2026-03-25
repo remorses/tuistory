@@ -1,4 +1,4 @@
-import * as nodePty from 'node-pty'
+import { spawn as zigSpawn } from 'zigpty'
 
 export interface IPty {
   write(data: string): void
@@ -19,7 +19,7 @@ export function spawn(command: string, args: string[], options: SpawnOptions): I
   const dataBuffer: string[] = []
   let dataCallback: ((data: string) => void) | null = null
 
-  const pty = nodePty.spawn(command, args, {
+  const pty = zigSpawn(command, args, {
     name: 'xterm-truecolor',
     cols: options.cols,
     rows: options.rows,
@@ -29,11 +29,12 @@ export function spawn(command: string, args: string[], options: SpawnOptions): I
 
   // Register callback immediately to capture all data
   pty.onData((data) => {
+    const str = typeof data === 'string' ? data : data.toString()
     if (dataCallback) {
-      dataCallback(data)
+      dataCallback(str)
     } else {
       // Buffer data until callback is registered
-      dataBuffer.push(data)
+      dataBuffer.push(str)
     }
   })
 
