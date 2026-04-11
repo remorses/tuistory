@@ -188,7 +188,8 @@ function createCliWithActions(
       rows: number
       cwd?: string
       env?: string[]
-      wait: boolean
+      // `--no-wait` produces `noWait?: boolean` on the inferred type
+      noWait?: boolean
       timeout: number
     }) => {
       // Check for duplicate session name
@@ -218,7 +219,7 @@ function createCliWithActions(
 
       sessions.set(options.session, session)
 
-      if (options.wait) {
+      if (!options.noWait) {
         const waited = await errore.tryAsync({
           try: () => session.waitForData({ timeout: options.timeout }),
           catch: (e) => new SessionCommandError({ operation: 'launch', session: options.session, reason: errorReason(e), cause: e }),
@@ -282,7 +283,8 @@ function createCliWithActions(
       underline?: boolean
       fg?: string
       bg?: string
-      cursor: boolean
+      // `--no-cursor` produces `noCursor?: boolean` on the inferred type
+      noCursor?: boolean
     }) => {
       const sessionName = requireSession(options)
       if (!sessionName) {
@@ -305,7 +307,7 @@ function createCliWithActions(
         try: () => session.text({
           trimEnd: options.trim,
           immediate: options.immediate,
-          showCursor: options.cursor,
+          showCursor: !options.noCursor,
           only: Object.keys(only).length > 0 ? only as any : undefined,
         }),
         catch: (e) => new SessionCommandError({ operation: 'snapshot', session: sessionName, reason: errorReason(e), cause: e }),

@@ -42,8 +42,8 @@
   "dependencies": {
     "@hono/node-server": "^1.19.9",
     "errore": "^0.11.0",
-    "ghostty-opentui": "^1.4.4",
-    "goke": "^6.1.3",
+    "ghostty-opentui": "workspace:*",
+    "goke": "^6.5.2",
     "hono": "^4.11.7",
     "kill-port-process": "^3.2.1",
     "picocolors": "^1.1.1",
