@@ -2,8 +2,7 @@
     <br />
     <br />
     <h3>tuistory</h3>
-    <p>Agent browser for TUIs and CLI processes</p>
-    <p>Control terminals, capture output, take screenshots. Designed for AI agents.</p>
+    <p>agent-browser for TUIs. type, screenshot, click. Designed for AI agents.</p>
     <br />
     <br />
 </div>
