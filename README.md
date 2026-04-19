@@ -31,63 +31,6 @@ npm install -g tuistory
 npx tuistory --help
 ```
 
-## Running processes in background (replaces tmux)
-
-tuistory can replace tmux for running background processes in automation scripts. The key advantage: **no more `sleep` and guessing**. tuistory waits for actual output reactively.
-
-### Before: tmux
-
-```bash
-# Start dev server
-tmux new-session -d -s dev
-tmux send-keys -t dev "pnpm dev" Enter
-
-# Guess how long to wait...
-sleep 5
-
-# Hope it's ready, grab whatever is on screen
-tmux capture-pane -t dev -p | grep "ready"
-
-# Check logs later (only visible screen, no scrollback)
-tmux capture-pane -t dev -p
-
-# Stop
-tmux send-keys -t dev C-c
-tmux kill-session -t dev
-```
-
-**Problems:** `sleep 5` is a blind guess. Too short and the server isn't ready. Too long and you waste time. `capture-pane` only shows what fits on screen, so if the server logged 500 lines, you only see the last 36.
-
-### After: tuistory
-
-```bash
-# Start dev server
-tuistory launch "pnpm dev" -s dev
-
-# Option 1: Wait for output to stabilize (when you don't know what to expect)
-tuistory -s dev wait-idle --timeout 30000
-
-# Option 2: Wait for specific text (when you know what "ready" looks like)
-tuistory -s dev wait "ready on" --timeout 30000
-
-# Read ALL output the process has printed (not just visible screen)
-tuistory read -s dev
-
-# Later, read only NEW output since last read
-tuistory read -s dev
-
-# Read entire buffered log (up to 1MB)
-tuistory read -s dev --all
-
-# Stop
-tuistory -s dev press ctrl c
-tuistory -s dev close
-```
-
-**How `wait-idle` and `wait` replace `sleep`:** Instead of sleeping for a fixed duration, `wait-idle` waits until the terminal stops receiving data (~60ms of silence), meaning the process finished its output burst. `wait` goes further and polls reactively until a specific pattern appears. Both react as fast as the terminal updates (~75ms), with no guessing. If the timeout expires, you get a clear error with the current screen content.
-
-**How `read` replaces `capture-pane`:** `snapshot` shows the current visible screen (like taking a photo of a monitor). `read` gives you the full output stream: everything the process printed since your last `read` call, with ANSI escape codes stripped. If a dev server logged 500 lines, `read` returns all 500 as clean text.
-
 ## CLI Usage
 
 ### Quick Start
@@ -218,6 +161,63 @@ tuistory -s mysession wait "Done" --timeout 60000  # Wait for completion
 tuistory -s mysession snapshot --trim
 ```
 
+## Running processes in background (replaces tmux)
+
+tuistory can replace tmux for running background processes in automation scripts. The key advantage: **no more `sleep` and guessing**. tuistory waits for actual output reactively.
+
+### Before: tmux
+
+```bash
+# Start dev server
+tmux new-session -d -s dev
+tmux send-keys -t dev "pnpm dev" Enter
+
+# Guess how long to wait...
+sleep 5
+
+# Hope it's ready, grab whatever is on screen
+tmux capture-pane -t dev -p | grep "ready"
+
+# Check logs later (only visible screen, no scrollback)
+tmux capture-pane -t dev -p
+
+# Stop
+tmux send-keys -t dev C-c
+tmux kill-session -t dev
+```
+
+**Problems:** `sleep 5` is a blind guess. Too short and the server isn't ready. Too long and you waste time. `capture-pane` only shows what fits on screen, so if the server logged 500 lines, you only see the last 36.
+
+### After: tuistory
+
+```bash
+# Start dev server
+tuistory launch "pnpm dev" -s dev
+
+# Option 1: Wait for output to stabilize (when you don't know what to expect)
+tuistory -s dev wait-idle --timeout 30000
+
+# Option 2: Wait for specific text (when you know what "ready" looks like)
+tuistory -s dev wait "ready on" --timeout 30000
+
+# Read ALL output the process has printed (not just visible screen)
+tuistory read -s dev
+
+# Later, read only NEW output since last read
+tuistory read -s dev
+
+# Read entire buffered log (up to 1MB)
+tuistory read -s dev --all
+
+# Stop
+tuistory -s dev press ctrl c
+tuistory -s dev close
+```
+
+**How `wait-idle` and `wait` replace `sleep`:** Instead of sleeping for a fixed duration, `wait-idle` waits until the terminal stops receiving data (~60ms of silence), meaning the process finished its output burst. `wait` goes further and polls reactively until a specific pattern appears. Both react as fast as the terminal updates (~75ms), with no guessing. If the timeout expires, you get a clear error with the current screen content.
+
+**How `read` replaces `capture-pane`:** `snapshot` shows the current visible screen (like taking a photo of a monitor). `read` gives you the full output stream: everything the process printed since your last `read` call, with ANSI escape codes stripped. If a dev server logged 500 lines, `read` returns all 500 as clean text.
+
 ## Library Usage (Playwright for terminals)
 
 Use tuistory programmatically in your tests or scripts. Like Playwright, but for terminal apps:
@@ -313,7 +313,7 @@ const coloredText = await session.text({ only: { foreground: '#ff0000' } })
 Read new process output since the last `read()` call. Returns clean text with ANSI codes stripped. Each call advances the cursor, so the next call only returns newer output.
 
 ```ts
-const newOutput = session.read()   // new since last read
+const newOutput = session.read() // new since last read
 const allOutput = session.readAll() // entire buffer (up to 1MB)
 ```
 
