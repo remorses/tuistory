@@ -66,7 +66,10 @@ tmux kill-session -t dev
 # Start dev server
 tuistory launch "pnpm dev" -s dev
 
-# Wait until it's actually ready (reacts in ~75ms, no guessing)
+# Option 1: Wait for output to stabilize (when you don't know what to expect)
+tuistory -s dev wait-idle --timeout 30000
+
+# Option 2: Wait for specific text (when you know what "ready" looks like)
 tuistory -s dev wait "ready on" --timeout 30000
 
 # Read ALL output the process has printed (not just visible screen)
@@ -83,7 +86,7 @@ tuistory -s dev press ctrl c
 tuistory -s dev close
 ```
 
-**How `wait` replaces `sleep`:** Instead of sleeping for a fixed duration, `wait` polls the terminal reactively. Every time the process emits new output, tuistory checks if it matches your pattern. The moment "ready on" appears, it returns — typically within ~75ms. If it never appears, you get a clear timeout error with the current screen content.
+**How `wait-idle` and `wait` replace `sleep`:** Instead of sleeping for a fixed duration, `wait-idle` waits until the terminal stops receiving data (~60ms of silence), meaning the process finished its output burst. `wait` goes further — it polls reactively until a specific pattern appears. Both react as fast as the terminal updates (~75ms), with no guessing. If the timeout expires, you get a clear error with the current screen content.
 
 **How `read` replaces `capture-pane`:** `snapshot` shows the current visible screen (like taking a photo of a monitor). `read` gives you the full output stream — everything the process printed since your last `read` call, with ANSI escape codes stripped. If a dev server logged 500 lines, `read` returns all 500 as clean text.
 
