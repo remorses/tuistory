@@ -41,12 +41,16 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.9",
+    "@hono/node-ws": "^1.3.0",
+    "@opentui/core": "0.1.88",
+    "@opentui/react": "0.1.88",
     "errore": "^0.11.0",
     "ghostty-opentui": "workspace:*",
     "goke": "^6.6.0",
     "hono": "^4.11.7",
     "kill-port-process": "^3.2.1",
     "picocolors": "^1.1.1",
+    "react": "^19",
     "string-dedent": "^3.0.1",
     "zod": "4.3.6"
   },

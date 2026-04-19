@@ -1,14 +1,14 @@
-<div align='center'>
-    <br/>
-    <br/>
-    <h3>tuistory</h3>
+<div align="center">
+    <br />
+    <br />
+    <h1>tuistory</h1>
     <p>Agent browser for TUIs and CLI processes</p>
-    <p>Control terminals, capture output, take screenshots — designed for AI agents</p>
-    <br/>
-    <br/>
+    <p>Control terminals, capture output, take screenshots. Designed for AI agents.</p>
+    <br />
+    <br />
 </div>
 
-tuistory is a CLI and library to control and capture terminal applications and process outputs. Like how [agent browsers](https://github.com/AiAgent-Browser/AiAgent-Browser) let AI agents drive web pages — launch, click, type, wait, screenshot — tuistory does the same for terminal apps.
+tuistory is a CLI and library to control and capture terminal applications and process outputs. Like how [agent browsers](https://github.com/AiAgent-Browser/AiAgent-Browser) let AI agents drive web pages (launch, click, type, wait, screenshot), tuistory does the same for terminal apps.
 
 - **Launch** processes in named background sessions (replaces tmux for automation)
 - **Type** text and **press** keys (Enter, Ctrl+C, arrow keys, chords)
@@ -21,12 +21,11 @@ tuistory is a CLI and library to control and capture terminal applications and p
 ## Installation
 
 ```bash
-# As a library
-bun add tuistory
 npm install tuistory
+```
 
+```bash
 # As a CLI (global)
-bun add -g tuistory
 npm install -g tuistory
 
 # Or use directly with npx/bunx
@@ -35,7 +34,7 @@ npx tuistory --help
 
 ## Running processes in background (replaces tmux)
 
-tuistory can replace tmux for running background processes in automation scripts. The key advantage: **no more `sleep` and guessing** — tuistory waits for actual output reactively.
+tuistory can replace tmux for running background processes in automation scripts. The key advantage: **no more `sleep` and guessing**. tuistory waits for actual output reactively.
 
 ### Before: tmux
 
@@ -58,7 +57,7 @@ tmux send-keys -t dev C-c
 tmux kill-session -t dev
 ```
 
-**Problems:** `sleep 5` is a blind guess. Too short and the server isn't ready. Too long and you waste time. `capture-pane` only shows what fits on screen — if the server logged 500 lines, you only see the last 36.
+**Problems:** `sleep 5` is a blind guess. Too short and the server isn't ready. Too long and you waste time. `capture-pane` only shows what fits on screen, so if the server logged 500 lines, you only see the last 36.
 
 ### After: tuistory
 
@@ -86,9 +85,9 @@ tuistory -s dev press ctrl c
 tuistory -s dev close
 ```
 
-**How `wait-idle` and `wait` replace `sleep`:** Instead of sleeping for a fixed duration, `wait-idle` waits until the terminal stops receiving data (~60ms of silence), meaning the process finished its output burst. `wait` goes further — it polls reactively until a specific pattern appears. Both react as fast as the terminal updates (~75ms), with no guessing. If the timeout expires, you get a clear error with the current screen content.
+**How `wait-idle` and `wait` replace `sleep`:** Instead of sleeping for a fixed duration, `wait-idle` waits until the terminal stops receiving data (~60ms of silence), meaning the process finished its output burst. `wait` goes further and polls reactively until a specific pattern appears. Both react as fast as the terminal updates (~75ms), with no guessing. If the timeout expires, you get a clear error with the current screen content.
 
-**How `read` replaces `capture-pane`:** `snapshot` shows the current visible screen (like taking a photo of a monitor). `read` gives you the full output stream — everything the process printed since your last `read` call, with ANSI escape codes stripped. If a dev server logged 500 lines, `read` returns all 500 as clean text.
+**How `read` replaces `capture-pane`:** `snapshot` shows the current visible screen (like taking a photo of a monitor). `read` gives you the full output stream: everything the process printed since your last `read` call, with ANSI escape codes stripped. If a dev server logged 500 lines, `read` returns all 500 as clean text.
 
 ## CLI Usage
 
@@ -188,14 +187,14 @@ tuistory sessions             # List active sessions
 
 ### Tips for Successful Automation
 
-**Run `snapshot` after every action** — Terminal applications are stateful and may show dialogs, prompts, or errors. Always check the current state:
+**Run `snapshot` after every action.** Terminal applications are stateful and may show dialogs, prompts, or errors. Always check the current state:
 
 ```bash
 tuistory -s mysession press enter
 tuistory -s mysession snapshot --trim  # See what happened
 ```
 
-**Use `read` for log-heavy processes** — When a process outputs more than fits on screen, `snapshot` only shows the visible portion. Use `read` to get the full output stream:
+**Use `read` for log-heavy processes.** When a process outputs more than fits on screen, `snapshot` only shows the visible portion. Use `read` to get the full output stream:
 
 ```bash
 tuistory launch "npm test" -s test
@@ -203,7 +202,7 @@ tuistory -s test wait "Tests:" --timeout 60000
 tuistory read -s test  # Get ALL test output, not just last screenful
 ```
 
-**Use `wait-idle` when you don't know what to wait for** — If you just need the process to finish its initial burst of output before reading, `wait-idle` waits until the terminal stops receiving data:
+**Use `wait-idle` when you don't know what to wait for.** If you just need the process to finish its initial burst of output before reading, `wait-idle` waits until the terminal stops receiving data:
 
 ```bash
 tuistory launch "npm test" -s test
@@ -211,7 +210,7 @@ tuistory -s test wait-idle --timeout 10000  # Wait for output to stabilize
 tuistory read -s test                       # Read everything it printed
 ```
 
-**Use `wait` for async operations** — Don't assume commands complete instantly:
+**Use `wait` for async operations.** Don't assume commands complete instantly:
 
 ```bash
 tuistory -s mysession type "long-running-command"
@@ -222,7 +221,7 @@ tuistory -s mysession snapshot --trim
 
 ## Library Usage (Playwright for terminals)
 
-Use tuistory programmatically in your tests or scripts — like Playwright, but for terminal apps:
+Use tuistory programmatically in your tests or scripts. Like Playwright, but for terminal apps:
 
 ```ts
 import { launchTerminal } from 'tuistory'
@@ -312,7 +311,7 @@ const coloredText = await session.text({ only: { foreground: '#ff0000' } })
 
 ### `session.read()`
 
-Read new process output since the last `read()` call. Returns clean text with ANSI codes stripped. Each call advances the cursor — the next call only returns newer output.
+Read new process output since the last `read()` call. Returns clean text with ANSI codes stripped. Each call advances the cursor, so the next call only returns newer output.
 
 ```ts
 const newOutput = session.read()   // new since last read
@@ -349,6 +348,15 @@ session.close()
 
 - [Termcast](https://github.com/remorses/termcast): A Raycast API re-implementation for the terminal. Turns raycast extensions into TUIs. Agents use tuistory to autonomously convert Raycast extensions into TUIs and fix any missing termcast APIs.
 - [Kimaki](https://github.com/remorses/kimaki): Discord bots agents that can use Tuistory to control TTY processes like opencode, claude code and debuggers.
+
+## Agent Skill
+
+This package ships a skill file that teaches AI coding agents how and when to
+use it. Install it with:
+
+```bash
+npx -y skills add remorses/tuistory
+```
 
 ## License
 

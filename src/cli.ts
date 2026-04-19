@@ -1043,6 +1043,32 @@ function createCliWithActions(
   //     }, 100)
   //   })
 
+  // The attach command is handled client-side (not through the relay HTTP endpoint)
+  // because it needs to run an interactive TUI with direct stdin/stdout access.
+  // This definition is only for --help display; the actual implementation is in
+  // runAttachCommand() which runs before the relay forwarding path.
+  cli
+    .command('attach', dedent`
+      Attach to a running session with an interactive TUI.
+
+      Opens a fullscreen terminal view (React + OpenTUI) that renders
+      the session's PTY output in real-time and forwards all keyboard
+      input. When you detach, the session keeps running in the daemon.
+
+      If no session is specified, shows an interactive picker when
+      multiple sessions exist, or auto-selects when there's only one.
+
+      **Requires Bun runtime** — if running under Node.js, the command
+      re-spawns itself under Bun automatically.
+    `)
+    .option('-s, --session <name>', 'Session name (auto-selects if only one)')
+    .example('tuistory attach -s claude')
+    .example('tuistory attach')
+    .action(() => {
+      // No-op: handled client-side in runAttachCommand()
+      ctx.stdout = 'attach command must be run client-side, not through relay'
+    })
+
   // Global examples showing the full workflow pattern
   cli.example(dedent`
     # Full workflow: launch, interact, snapshot, close
@@ -1217,15 +1243,122 @@ async function waitForRelay(timeoutMs: number = 5000, minVersion?: string): Prom
 async function startRelayServer() {
   const { Hono } = await import('hono')
   const { serve } = await import('@hono/node-server')
+  const { createNodeWebSocket } = await import('@hono/node-ws')
 
   const logger = createFileLogger()
   const sessions = new Map<string, Session>()
 
   const app = new Hono()
+  const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
 
   app.get('/version', (c) => {
     return c.json({ version: VERSION })
   })
+
+  // List all active sessions — used by attach session selector
+  app.get('/sessions', (c) => {
+    const list = Array.from(sessions.entries()).map(([name, session]) => ({
+      name,
+      cols: session.currentCols,
+      rows: session.currentRows,
+      dead: session.isDead,
+    }))
+    return c.json(list)
+  })
+
+  // WebSocket endpoint for attach — streams PTY data bidirectionally.
+  // Multiple attach clients can connect to the same session simultaneously
+  // (needed for future grid view). Each client subscribes independently.
+  app.get('/attach', upgradeWebSocket((c) => {
+    let unsubscribe: (() => void) | null = null
+    let sessionName: string | null = null
+
+    return {
+      onMessage(event, ws) {
+        const raw = typeof event.data === 'string' ? event.data : ''
+        // Try parsing as JSON for control messages
+        let parsed: { type: string; session?: string; cols?: number; rows?: number; data?: string } | null = null
+        try { parsed = JSON.parse(raw) } catch {}
+
+        if (parsed && parsed.type === 'attach' && parsed.session) {
+          // Initial attach handshake
+          sessionName = parsed.session
+          const session = sessions.get(sessionName)
+          if (!session) {
+            ws.send(JSON.stringify({ type: 'error', message: `Session "${sessionName}" not found` }))
+            ws.close(1008, 'Session not found')
+            return
+          }
+
+          // Resize PTY to match client terminal if dimensions provided
+          if (parsed.cols && parsed.rows && !session.isDead) {
+            errore.try(() => session.resize({ cols: parsed!.cols!, rows: parsed!.rows! }))
+          }
+
+          // Send all buffered raw output so the client renders the full
+          // terminal history, not just data arriving after attach.
+          const buffered = session.getRawOutput()
+          if (buffered) {
+            try { ws.send(buffered) } catch {}
+          }
+
+          // Subscribe to new PTY data and forward to WebSocket client
+          unsubscribe = session.subscribe((data) => {
+            try { ws.send(data) } catch {}
+          })
+
+          // Notify client when PTY exits
+          session.onExit((info) => {
+            try {
+              ws.send(JSON.stringify({ type: 'exit', exitCode: info.exitCode, signal: info.signal }))
+            } catch {}
+          })
+
+          // If session is already dead, notify immediately
+          if (session.isDead && session.exitInfo) {
+            ws.send(JSON.stringify({ type: 'exit', exitCode: session.exitInfo.exitCode, signal: session.exitInfo.signal }))
+          }
+
+          logger.log(`Attach client connected to session "${sessionName}"`)
+          return
+        }
+
+        if (parsed && parsed.type === 'resize' && sessionName) {
+          const session = sessions.get(sessionName)
+          if (session && parsed.cols && parsed.rows && !session.isDead) {
+            errore.try(() => session.resize({ cols: parsed!.cols!, rows: parsed!.rows! }))
+          }
+          return
+        }
+
+        if (parsed && parsed.type === 'kill' && sessionName) {
+          const session = sessions.get(sessionName)
+          if (session) {
+            session.killProcess()
+            logger.log(`Session "${sessionName}" killed by attach client`)
+          }
+          return
+        }
+
+        // Raw text input — forward to PTY
+        if (sessionName) {
+          const session = sessions.get(sessionName)
+          if (session && !session.isDead) {
+            errore.try(() => session.writeRaw(raw))
+          }
+        }
+      },
+      onClose() {
+        if (unsubscribe) unsubscribe()
+        if (sessionName) {
+          logger.log(`Attach client disconnected from session "${sessionName}"`)
+        }
+      },
+      onError() {
+        if (unsubscribe) unsubscribe()
+      },
+    }
+  }))
 
   app.post('/cli', async (c) => {
     const { argv } = await c.req.json() as { argv: string[] }
@@ -1257,6 +1390,9 @@ async function startRelayServer() {
     port: RELAY_PORT,
     hostname: '127.0.0.1',
   })
+
+  // Inject WebSocket support into the HTTP server
+  injectWebSocket(server)
 
   // Write PID file so killRelay() can send SIGTERM instead of kill-by-port
   ensureTuistoryDir()
@@ -1321,6 +1457,168 @@ function spawnRelayServer(): void {
   serverProcess.unref()
 }
 
+// Ensure the relay daemon is running and at the correct version.
+// Shared by both normal CLI forwarding and the attach command.
+async function ensureRelayRunning(): Promise<void> {
+  const serverVersion = await getRelayVersion()
+
+  if (serverVersion === null) {
+    spawnRelayServer()
+    const started = await waitForRelay()
+    if (!started) {
+      const err = new RelayStartError({ action: 'start', reason: `timed out waiting for relay on port ${RELAY_PORT}` })
+      console.error(pc.red(err.message))
+      console.error(pc.red(`Check logs at: ${LOG_FILE_PATH}`))
+      process.exit(1)
+    }
+  } else if (serverVersion !== VERSION) {
+    const comparison = compareVersions(serverVersion, VERSION)
+    if (comparison < 0) {
+      const lockAcquired = acquireRestartLock()
+      if (lockAcquired) {
+        try {
+          const currentVersion = await getRelayVersion()
+          if (currentVersion !== null && compareVersions(currentVersion, VERSION) >= 0) {
+            // Already restarted by another client
+          } else {
+            console.error(pc.yellow(`Relay server version mismatch (server: ${serverVersion}, client: ${VERSION}), restarting...`))
+            await killRelay()
+            spawnRelayServer()
+            const started = await waitForRelay(5000, VERSION)
+            if (!started) {
+              const err = new RelayStartError({ action: 'restart', reason: `timed out waiting for relay v${VERSION} on port ${RELAY_PORT}` })
+              console.error(pc.red(err.message))
+              console.error(pc.red(`Check logs at: ${LOG_FILE_PATH}`))
+              process.exit(1)
+            }
+          }
+        } finally {
+          releaseRestartLock()
+        }
+      } else {
+        const started = await waitForRelay(15000, VERSION)
+        if (!started) {
+          const err = new RelayStartError({ action: 'restart', reason: `timed out waiting for relay v${VERSION} after another client restarted it` })
+          console.error(pc.red(err.message))
+          console.error(pc.red(`Check logs at: ${LOG_FILE_PATH}`))
+          process.exit(1)
+        }
+      }
+    }
+  }
+}
+
+// Session info returned by GET /sessions
+interface SessionInfo {
+  name: string
+  cols: number
+  rows: number
+  dead: boolean
+}
+
+// Fetch session list from relay
+async function getRelaySessions(): Promise<SessionInfo[] | Error> {
+  const response = await errore.tryAsync({
+    try: () => fetch(`http://127.0.0.1:${RELAY_PORT}/sessions`, {
+      signal: AbortSignal.timeout(2000),
+    }),
+    catch: (e) => new RelayConnectionError({ port: String(RELAY_PORT), reason: errorReason(e), cause: e }),
+  })
+  if (response instanceof Error) return response
+  const data = await errore.tryAsync({
+    try: () => response.json() as Promise<SessionInfo[]>,
+    catch: (e) => new RelayConnectionError({ port: String(RELAY_PORT), reason: 'invalid JSON', cause: e }),
+  })
+  return data
+}
+
+// Run the attach command client-side. This is handled separately from
+// the normal relay forwarding because it needs direct stdin/stdout for
+// the interactive TUI.
+async function runAttachCommand() {
+  // TODO: Remove bun re-spawn when opentui supports Node.js natively.
+  // OpenTUI's Zig renderer currently requires Bun's FFI — running under
+  // Node.js will fail at createCliRenderer(). Detect runtime and re-spawn.
+  const isBun = typeof globalThis.Bun !== 'undefined'
+  if (!isBun) {
+    const { spawnSync } = await import('node:child_process')
+    const result = spawnSync('bun', [__filename, ...process.argv.slice(2)], {
+      stdio: 'inherit',
+      env: process.env,
+    })
+    process.exit(result.status ?? 1)
+    return
+  }
+
+  // Parse --session / -s from argv
+  let sessionName: string | undefined
+  const args = process.argv.slice(2)
+  for (let i = 0; i < args.length; i++) {
+    if ((args[i] === '-s' || args[i] === '--session') && args[i + 1]) {
+      sessionName = args[i + 1]
+      break
+    }
+    const match = args[i].match(/^(?:-s|--session)=(.+)$/)
+    if (match) {
+      sessionName = match[1]
+      break
+    }
+  }
+
+  // If no session specified, fetch list and auto-select or prompt
+  if (!sessionName) {
+    const sessions = await getRelaySessions()
+    if (sessions instanceof Error) {
+      console.error(pc.red(`Failed to list sessions: ${sessions.message}`))
+      process.exit(1)
+      return
+    }
+
+    const alive = sessions.filter(s => !s.dead)
+    if (alive.length === 0) {
+      console.error(pc.red('No active sessions. Launch one first with: tuistory launch <command>'))
+      process.exit(1)
+      return
+    }
+
+    if (alive.length === 1) {
+      sessionName = alive[0].name
+      console.log(pc.dim(`Auto-selecting session: ${sessionName}`))
+    } else {
+      // Interactive session picker using simple stdin prompt
+      console.log(pc.bold('Select a session to attach:'))
+      console.log()
+      for (let i = 0; i < alive.length; i++) {
+        const s = alive[i]
+        console.log(`  ${pc.cyan(String(i + 1))}. ${s.name} ${pc.dim(`(${s.cols}x${s.rows})`)}`)
+      }
+      console.log()
+      process.stdout.write(pc.dim('Enter number: '))
+
+      const readline = await import('node:readline')
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+      const answer = await new Promise<string>((resolve) => {
+        rl.on('line', (line) => {
+          rl.close()
+          resolve(line.trim())
+        })
+      })
+
+      const idx = parseInt(answer, 10) - 1
+      if (isNaN(idx) || idx < 0 || idx >= alive.length) {
+        console.error(pc.red('Invalid selection'))
+        process.exit(1)
+        return
+      }
+      sessionName = alive[idx].name
+    }
+  }
+
+  // Dynamically import and run the attach TUI
+  const { runAttachTui } = await import('./attach-tui.js')
+  await runAttachTui({ sessionName, relayPort: RELAY_PORT })
+}
+
 // CLI thin client - forwards to relay
 async function runCliClient() {
   // Handle --help and --version locally (they don't need the relay)
@@ -1335,66 +1633,19 @@ async function runCliClient() {
     return
   }
 
-  // Check relay server version
-  const serverVersion = await getRelayVersion()
-
-  if (serverVersion === null) {
-    // Server not running, start it
-    spawnRelayServer()
-
-    const started = await waitForRelay()
-    if (!started) {
-      const err = new RelayStartError({ action: 'start', reason: `timed out waiting for relay on port ${RELAY_PORT}` })
-      console.error(pc.red(err.message))
-      console.error(pc.red(`Check logs at: ${LOG_FILE_PATH}`))
-      process.exit(1)
-    }
-  } else if (serverVersion !== VERSION) {
-    // Version mismatch - check if we should restart
-    const comparison = compareVersions(serverVersion, VERSION)
-
-    if (comparison < 0) {
-      // Server is older than client - use file lock to prevent two clients
-      // from racing to kill+restart simultaneously (causes double restart)
-      const lockAcquired = acquireRestartLock()
-
-      if (lockAcquired) {
-        try {
-          // Re-check version after acquiring lock — another client may have
-          // already restarted the daemon while we were waiting
-          const currentVersion = await getRelayVersion()
-          if (currentVersion !== null && compareVersions(currentVersion, VERSION) >= 0) {
-            // Already restarted by another client, nothing to do
-          } else {
-            console.error(pc.yellow(`Relay server version mismatch (server: ${serverVersion}, client: ${VERSION}), restarting...`))
-            await killRelay()
-            spawnRelayServer()
-
-            const started = await waitForRelay(5000, VERSION)
-            if (!started) {
-              const err = new RelayStartError({ action: 'restart', reason: `timed out waiting for relay v${VERSION} on port ${RELAY_PORT}` })
-              console.error(pc.red(err.message))
-              console.error(pc.red(`Check logs at: ${LOG_FILE_PATH}`))
-              process.exit(1)
-            }
-          }
-        } finally {
-          releaseRestartLock()
-        }
-      } else {
-        // Another client is restarting the daemon, wait longer than stale lock
-        // timeout (10s) to give the lock holder time to finish restarting
-        const started = await waitForRelay(15000, VERSION)
-        if (!started) {
-          const err = new RelayStartError({ action: 'restart', reason: `timed out waiting for relay v${VERSION} after another client restarted it` })
-          console.error(pc.red(err.message))
-          console.error(pc.red(`Check logs at: ${LOG_FILE_PATH}`))
-          process.exit(1)
-        }
-      }
-    }
-    // If server is newer, just use it (don't kill a newer server)
+  // Intercept `attach` command — it runs an interactive TUI client-side,
+  // not through the relay HTTP endpoint. Check for `attach` in argv before
+  // the normal relay forwarding path.
+  const isAttach = process.argv.some((arg, i) => i >= 2 && arg === 'attach')
+  if (isAttach && !hasHelp) {
+    // Ensure relay is running first (attach needs WebSocket connection to it)
+    await ensureRelayRunning()
+    await runAttachCommand()
+    return
   }
+
+  // Ensure relay is running before forwarding
+  await ensureRelayRunning()
 
   // Forward argv to relay
   const response = await errore.tryAsync({

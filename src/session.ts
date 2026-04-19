@@ -183,6 +183,9 @@ export class Session {
   private dataResolvers: Array<() => void> = []
   private closed = false
   private showCursor: boolean
+  // Multiple simultaneous subscribers for attach clients (and future grid view).
+  // Each subscriber receives raw PTY data chunks independently.
+  private dataSubscribers: Set<(data: string) => void> = new Set()
 
   // Output buffering for `read()` — accumulates raw PTY data so callers can
   // retrieve new output since their last read, like a streaming log.
@@ -245,6 +248,11 @@ export class Session {
         }
       }
 
+      // Notify attach subscribers (raw PTY data forwarding)
+      for (const sub of this.dataSubscribers) {
+        sub(data)
+      }
+
       if (!this.hasReceivedData) {
         this.hasReceivedData = true
         const dataResolvers = this.dataResolvers.splice(0)
@@ -280,6 +288,33 @@ export class Session {
   /** Whether the PTY process has exited (session is dead but not yet closed). */
   get isDead(): boolean {
     return this.dead
+  }
+
+  get currentCols(): number {
+    return this.cols
+  }
+
+  get currentRows(): number {
+    return this.rows
+  }
+
+  /**
+   * Subscribe to raw PTY data chunks. Returns an unsubscribe function.
+   * Multiple subscribers are supported (for attach clients, future grid view).
+   */
+  subscribe(callback: (data: string) => void): () => void {
+    this.dataSubscribers.add(callback)
+    return () => { this.dataSubscribers.delete(callback) }
+  }
+
+  /**
+   * Kill the PTY process (SIGTERM) without closing/destroying the session.
+   * Used by attach "kill" action to stop the process while keeping session metadata.
+   */
+  killProcess(): void {
+    if (!this.dead) {
+      this.pty.kill()
+    }
   }
 
   /** Register a callback for when the PTY process exits. Fires immediately if already dead. */
@@ -785,6 +820,15 @@ export class Session {
     return this.outputReadIndex < this.outputChunks.length
   }
 
+  /**
+   * Get all raw buffered PTY output (with ANSI escape codes preserved).
+   * Used by attach to replay the full terminal history on connect so the
+   * ghostty-terminal renders everything, not just new data.
+   */
+  getRawOutput(): string {
+    return this.outputChunks.join('')
+  }
+
   /** Get the raw terminal data for image rendering or other processing */
   getTerminalData(): TerminalData {
     return this.term.getJson()
@@ -801,6 +845,8 @@ export class Session {
   close(): void {
     this.closed = true
     clearTimeout(this.idleTimer)
+    // Clear all attach subscribers
+    this.dataSubscribers.clear()
     // Drain all pending resolvers so no promises hang after close
     this.drainResolvers()
     // Only kill the PTY if the process is still alive
