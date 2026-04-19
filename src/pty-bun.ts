@@ -3,6 +3,7 @@ export interface IPty {
   resize(cols: number, rows: number): void
   kill(): void
   onData(callback: (data: string) => void): void
+  onExit(callback: (info: { exitCode: number; signal: number }) => void): void
 }
 
 export interface SpawnOptions {
@@ -16,6 +17,8 @@ export function spawn(command: string, args: string[], options: SpawnOptions): I
   // Buffer to store data received before callback is registered
   const dataBuffer: string[] = []
   let dataCallback: ((data: string) => void) | null = null
+  let exitCallback: ((info: { exitCode: number; signal: number }) => void) | null = null
+  let exitInfo: { exitCode: number; signal: number } | null = null
   const decoder = new TextDecoder()
 
   const subprocess = Bun.spawn([command, ...args], {
@@ -40,16 +43,31 @@ export function spawn(command: string, args: string[], options: SpawnOptions): I
     },
   })
 
-  subprocess.exited.then(() => {
+  subprocess.exited.then((exitCode) => {
+    // Flush any remaining decoder bytes
     const tail = decoder.decode()
-    if (!tail) {
-      return
+    if (tail) {
+      if (dataCallback) {
+        dataCallback(tail)
+      } else {
+        dataBuffer.push(tail)
+      }
     }
-    if (dataCallback) {
-      dataCallback(tail)
-      return
+
+    // Fire exit callback. Bun doesn't expose the signal number directly,
+    // so we use 0 (no signal) as default.
+    const info = { exitCode: exitCode ?? 0, signal: 0 }
+    exitInfo = info
+    if (exitCallback) {
+      exitCallback(info)
     }
-    dataBuffer.push(tail)
+  }).catch(() => {
+    // Process spawn/exit errors — fire exit with code 1
+    const info = { exitCode: 1, signal: 0 }
+    exitInfo = info
+    if (exitCallback) {
+      exitCallback(info)
+    }
   })
 
   const terminal = subprocess.terminal!
@@ -72,6 +90,13 @@ export function spawn(command: string, args: string[], options: SpawnOptions): I
         for (const data of buffered) {
           callback(data)
         }
+      }
+    },
+    onExit(callback) {
+      exitCallback = callback
+      // If process already exited before callback was registered, fire immediately
+      if (exitInfo) {
+        callback(exitInfo)
       }
     },
   }

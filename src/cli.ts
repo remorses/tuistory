@@ -219,6 +219,12 @@ function createCliWithActions(
 
       sessions.set(options.session, session)
 
+      // Log when PTY process exits so daemon operators can see what happened.
+      // Don't auto-remove — the user may still want to read the last snapshot.
+      session.onExit((info) => {
+        logger.log(`Session "${options.session}" PTY exited (code: ${info.exitCode}, signal: ${info.signal})`)
+      })
+
       if (!options.noWait) {
         const waited = await errore.tryAsync({
           try: () => session.waitForData({ timeout: options.timeout }),
@@ -1175,7 +1181,7 @@ async function startRelayServer() {
   logger.log(`Version: ${VERSION}`)
   logger.log(`PID: ${process.pid}`)
 
-  const gracefulShutdown = (signal: string) => {
+  const gracefulShutdown = async (signal: string) => {
     logger.log(`Relay server shutting down (${signal})`)
     for (const [name, session] of sessions) {
       errore.try(() => session.close())
@@ -1183,12 +1189,16 @@ async function startRelayServer() {
     }
     sessions.clear()
     errore.try(() => fs.unlinkSync(PID_FILE))
-    server.close()
+    // Close the HTTP server first so no new requests are accepted,
+    // then flush the logger, then exit.
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    // Give the logger queue a chance to flush final writes
+    await logger.log('Shutdown complete')
     process.exit(0)
   }
 
-  process.on('SIGINT', () => gracefulShutdown('SIGINT'))
-  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
+  process.on('SIGINT', () => { gracefulShutdown('SIGINT') })
+  process.on('SIGTERM', () => { gracefulShutdown('SIGTERM') })
 
   // Prevent unhandled errors from crashing the daemon and killing all sessions.
   // Log and continue — individual sessions may break but others survive.

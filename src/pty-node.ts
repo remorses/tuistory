@@ -5,6 +5,7 @@ export interface IPty {
   resize(cols: number, rows: number): void
   kill(): void
   onData(callback: (data: string) => void): void
+  onExit(callback: (info: { exitCode: number; signal: number }) => void): void
 }
 
 export interface SpawnOptions {
@@ -18,6 +19,8 @@ export function spawn(command: string, args: string[], options: SpawnOptions): I
   // Buffer to store data received before callback is registered
   const dataBuffer: string[] = []
   let dataCallback: ((data: string) => void) | null = null
+  let exitCallback: ((info: { exitCode: number; signal: number }) => void) | null = null
+  let exitInfo: { exitCode: number; signal: number } | null = null
 
   const pty = zigSpawn(command, args, {
     name: 'xterm-truecolor',
@@ -35,6 +38,14 @@ export function spawn(command: string, args: string[], options: SpawnOptions): I
     } else {
       // Buffer data until callback is registered
       dataBuffer.push(str)
+    }
+  })
+
+  // Listen for process exit from zigpty
+  pty.onExit((info) => {
+    exitInfo = info
+    if (exitCallback) {
+      exitCallback(info)
     }
   })
 
@@ -56,6 +67,13 @@ export function spawn(command: string, args: string[], options: SpawnOptions): I
         for (const data of buffered) {
           callback(data)
         }
+      }
+    },
+    onExit(callback) {
+      exitCallback = callback
+      // If process already exited before callback was registered, fire immediately
+      if (exitInfo) {
+        callback(exitInfo)
       }
     },
   }

@@ -182,7 +182,12 @@ export class Session {
   private hasReceivedData = false
   private dataResolvers: Array<() => void> = []
   private closed = false
+  /** True when the PTY child process has exited but close() hasn't been called yet. */
+  private dead = false
   private showCursor: boolean
+  /** Exit info from the PTY process, null if still running. */
+  exitInfo: { exitCode: number; signal: number } | null = null
+  private exitListeners: Array<(info: { exitCode: number; signal: number }) => void> = []
 
   constructor(options: LaunchOptions) {
     this.cols = options.cols ?? 120
@@ -238,21 +243,83 @@ export class Session {
         })
       }, 60) // Wait 60ms after last data for content to stabilize
     })
+
+    // When the PTY child process exits, mark session as dead and resolve all
+    // pending waiters so they don't hang forever. The session can still be
+    // read (snapshot) but writes will fail with a clear error.
+    this.pty.onExit((info) => {
+      if (this.closed) return
+      this.dead = true
+      this.exitInfo = info
+      this.drainResolvers()
+      // Notify external listeners (e.g. the daemon for logging/cleanup)
+      const listeners = this.exitListeners.splice(0)
+      listeners.forEach((fn) => fn(info))
+    })
+  }
+
+  /** Whether the PTY process has exited (session is dead but not yet closed). */
+  get isDead(): boolean {
+    return this.dead
+  }
+
+  /** Register a callback for when the PTY process exits. Fires immediately if already dead. */
+  onExit(callback: (info: { exitCode: number; signal: number }) => void): void {
+    if (this.exitInfo) {
+      callback(this.exitInfo)
+      return
+    }
+    this.exitListeners.push(callback)
+  }
+
+  /**
+   * Drain all pending idle and data resolvers immediately.
+   * Called when the PTY exits or session is closed so waiters don't hang.
+   */
+  private drainResolvers(): void {
+    // Resolve idle waiters — they'll get whatever terminal state exists
+    const idleResolvers = this.idleResolvers.splice(0)
+    idleResolvers.forEach((fn) => fn())
+
+    // Resolve data waiters if we already received data, otherwise they'll
+    // see the timeout naturally since no more data will arrive
+    if (this.hasReceivedData) {
+      const dataResolvers = this.dataResolvers.splice(0)
+      dataResolvers.forEach((fn) => fn())
+    }
+  }
+
+  /** Throw if the PTY is dead or session is closed, preventing writes to a dead process. */
+  private assertWritable(operation: string): void {
+    if (this.closed) {
+      throw new Error(`Cannot ${operation}: session is closed`)
+    }
+    if (this.dead) {
+      const code = this.exitInfo?.exitCode ?? 'unknown'
+      throw new Error(`Cannot ${operation}: PTY process has exited (exit code: ${code})`)
+    }
   }
 
   async waitForData(options?: { timeout?: number }): Promise<void> {
     if (this.hasReceivedData) {
       return
     }
+    if (this.dead || this.closed) {
+      throw new Error('waitForData failed: PTY process has already exited without producing data')
+    }
     const timeout = options?.timeout ?? 5000
     return new Promise<void>((resolve, reject) => {
       const t = setTimeout(() => {
+        // Remove this resolver from the array to prevent leaks
+        const idx = this.dataResolvers.indexOf(resolver)
+        if (idx !== -1) this.dataResolvers.splice(idx, 1)
         reject(new Error(`waitForData timed out after ${timeout}ms - no data received from PTY`))
       }, timeout)
-      this.dataResolvers.push(() => {
+      const resolver = () => {
         clearTimeout(t)
         resolve()
-      })
+      }
+      this.dataResolvers.push(resolver)
     })
   }
 
@@ -272,6 +339,7 @@ export class Session {
   }
 
   private async write(data: string): Promise<void> {
+    this.assertWritable('write')
     this.pty.write(data)
     return this.waitIdle()
   }
@@ -281,11 +349,14 @@ export class Session {
    * Useful for capturing intermediate frames during layout transitions.
    */
   writeRaw(data: string): void {
+    this.assertWritable('writeRaw')
     this.pty.write(data)
   }
 
   async type(text: string): Promise<void> {
+    this.assertWritable('type')
     for (const char of text) {
+      this.assertWritable('type')
       this.pty.write(char)
       await new Promise((resolve) => setTimeout(resolve, 1))
     }
@@ -358,6 +429,7 @@ export class Session {
    * Useful for capturing intermediate frames during layout transitions.
    */
   sendKey(keys: Key | Key[]): void {
+    this.assertWritable('sendKey')
     const code = this.getKeyCode(keys)
     if (code) {
       this.pty.write(code)
@@ -610,6 +682,7 @@ export class Session {
   }
 
   async clickAt(x: number, y: number): Promise<void> {
+    this.assertWritable('clickAt')
     const xPos = x + 1
     const yPos = y + 1
     this.pty.write(`\x1b[<0;${xPos};${yPos}M`)
@@ -623,6 +696,7 @@ export class Session {
    * @param y Y coordinate for the scroll event (default: center of terminal)
    */
   async scrollUp(lines: number = 1, x?: number, y?: number): Promise<void> {
+    this.assertWritable('scrollUp')
     const xPos = (x ?? Math.floor(this.cols / 2)) + 1
     const yPos = (y ?? Math.floor(this.rows / 2)) + 1
     // SGR mouse scroll up: button 64 (scroll up = 4 | 64 = 64)
@@ -638,6 +712,7 @@ export class Session {
    * @param y Y coordinate for the scroll event (default: center of terminal)
    */
   async scrollDown(lines: number = 1, x?: number, y?: number): Promise<void> {
+    this.assertWritable('scrollDown')
     const xPos = (x ?? Math.floor(this.cols / 2)) + 1
     const yPos = (y ?? Math.floor(this.rows / 2)) + 1
     // SGR mouse scroll down: button 65 (scroll down = 5 | 64 = 65)
@@ -652,6 +727,7 @@ export class Session {
   }
 
   resize(options: { cols: number; rows: number }): void {
+    this.assertWritable('resize')
     this.cols = options.cols
     this.rows = options.rows
     this.term.resize(options.cols, options.rows)
@@ -661,7 +737,12 @@ export class Session {
   close(): void {
     this.closed = true
     clearTimeout(this.idleTimer)
-    this.pty.kill()
+    // Drain all pending resolvers so no promises hang after close
+    this.drainResolvers()
+    // Only kill the PTY if the process is still alive
+    if (!this.dead) {
+      this.pty.kill()
+    }
     this.term.destroy()
 
     if (!this.generatedTermcastDbSuffix) {
