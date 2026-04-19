@@ -256,7 +256,7 @@ await session.press(['ctrl', 'c'])
 session.close()
 ```
 
-## API
+## Library API (for writing TUI tests)
 
 ### `launchTerminal(options)`
 
