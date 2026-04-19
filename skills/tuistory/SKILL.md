@@ -1,16 +1,16 @@
 ---
 name: tuistory
 description: |
-  Playwright for terminals.
+  Control and monitor terminal applications. Supports running TUI processes in background. TMUX replacement for agents. Can control fully interactive TUI apps like claude or opencode.
 
-  Use tuistory when you need to:
-  - Run background processes for agents. prefer it over `tmux` because it waits for real output instead of guessing with `sleep`
+  Use tuistory and read the skill when you need to:
+  - Run background processes for agents like dev servers. prefer it over `tmux` because it waits for real output instead of guessing with `sleep`
   - Control interactive CLIs and TUIs by typing, pressing keys, clicking, waiting, and taking snapshots
   - Write Playwright-style tests for terminal apps with `vitest` or `bun:test`
 
   It has **2 modes**:
   - **CLI** (`tuistory`) for persistent background sessions and terminal automation. **Run `tuistory --help` first.**
-  - **JS/TS API** (`launchTerminal`) for tests and programmatic control.
+  - **JS/TS API** (`launchTerminal`) for writing tests (like playwright for TUIs) and programmatic control in scripts.
 ---
 
 # tuistory
