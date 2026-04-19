@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.1.0
+
+1. **New `read` command** — access full process output, not just the visible screen. `snapshot` only shows what fits on the terminal viewport (e.g. 36 lines). `read` returns everything the process printed since the last call, with ANSI escape codes stripped, from a 1MB ring buffer:
+
+   ```bash
+   # New output since last read
+   tuistory read -s mysession
+
+   # Entire buffered output
+   tuistory read -s mysession --all
+
+   # Block until new output arrives
+   tuistory read -s mysession --follow --timeout 30000
+   ```
+
+   Library API:
+
+   ```ts
+   const newOutput = session.read()   // new since last read
+   const allOutput = session.readAll() // entire buffer (up to 1MB)
+   ```
+
+2. **New `attach` command** — reconnect to a running session in a fullscreen terminal UI. Replay buffered PTY output, stream new data live, and forward keyboard input via WebSocket:
+
+   ```bash
+   # Attach to a specific session
+   tuistory attach -s mysession
+
+   # Attach interactively (pick from running sessions)
+   tuistory attach
+   ```
+
+   Includes clickable Detach and Kill buttons in the status bar, and uses `@clack/prompts` for session selection when multiple sessions are running.
+
+3. **Replaced node-pty with zigpty** — no more C++ compilation or node-gyp at install time. zigpty ships prebuilt Zig binaries for all platforms, is 350x smaller (43 KB vs 15.5 MB), and is an API-compatible drop-in replacement.
+
+4. **Fixed daemon crashes from dead PTY processes** — the daemon no longer crashes or hangs when a spawned process exits. All write operations now throw a clear error if the process is dead instead of silently failing. Pending `waitForText`, `waitIdle`, and `waitForData` promises resolve immediately when the process exits instead of hanging forever.
+
+5. **Graceful daemon shutdown** — `server.close()` now properly completes before `process.exit()`, preventing dropped in-flight HTTP responses.
+
 ## 0.0.16
 
 - Add `--padding <cells>` flag to `screenshot` command — frame padding in terminal cells (default: 2), converted to pixels based on font size
