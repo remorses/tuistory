@@ -1,7 +1,7 @@
 <div align="center">
     <br />
     <br />
-    <h1>tuistory</h1>
+    <h3>tuistory</h3>
     <p>Agent browser for TUIs and CLI processes</p>
     <p>Control terminals, capture output, take screenshots. Designed for AI agents.</p>
     <br />
