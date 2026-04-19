@@ -4,7 +4,7 @@ description: |
   Playwright for terminals.
 
   Use tuistory when you need to:
-  - Run background processes for agents and prefer it over `tmux` because it waits for real output instead of guessing with `sleep`
+  - Run background processes for agents. prefer it over `tmux` because it waits for real output instead of guessing with `sleep`
   - Control interactive CLIs and TUIs by typing, pressing keys, clicking, waiting, and taking snapshots
   - Write Playwright-style tests for terminal apps with `vitest` or `bun:test`
 
