@@ -2,11 +2,21 @@
     <br/>
     <br/>
     <h3>tuistory</h3>
-    <p>Playwright for terminal user interfaces</p>
-    <p>Write end-to-end tests for terminal applications</p>
+    <p>Agent browser for TUIs and CLI processes</p>
+    <p>Control terminals, capture output, take screenshots — designed for AI agents</p>
     <br/>
     <br/>
 </div>
+
+tuistory is a CLI and library to control and capture terminal applications and process outputs. Like how [agent browsers](https://github.com/AiAgent-Browser/AiAgent-Browser) let AI agents drive web pages — launch, click, type, wait, screenshot — tuistory does the same for terminal apps.
+
+- **Launch** processes in named background sessions (replaces tmux for automation)
+- **Type** text and **press** keys (Enter, Ctrl+C, arrow keys, chords)
+- **Wait** for specific output with regex patterns and timeouts (replaces `sleep`)
+- **Read** new process output since last call (streaming log access)
+- **Snapshot** the current terminal screen as text
+- **Screenshot** the terminal as JPEG/PNG/WebP images
+- **Click** on text patterns or coordinates (mouse events)
 
 ## Installation
 
@@ -23,9 +33,61 @@ npm install -g tuistory
 npx tuistory --help
 ```
 
-## CLI Usage
+## Running processes in background (replaces tmux)
 
-tuistory provides a CLI for interacting with terminal sessions from the command line or shell scripts.
+tuistory can replace tmux for running background processes in automation scripts. The key advantage: **no more `sleep` and guessing** — tuistory waits for actual output reactively.
+
+### Before: tmux
+
+```bash
+# Start dev server
+tmux new-session -d -s dev
+tmux send-keys -t dev "pnpm dev" Enter
+
+# Guess how long to wait...
+sleep 5
+
+# Hope it's ready, grab whatever is on screen
+tmux capture-pane -t dev -p | grep "ready"
+
+# Check logs later (only visible screen, no scrollback)
+tmux capture-pane -t dev -p
+
+# Stop
+tmux send-keys -t dev C-c
+tmux kill-session -t dev
+```
+
+**Problems:** `sleep 5` is a blind guess. Too short and the server isn't ready. Too long and you waste time. `capture-pane` only shows what fits on screen — if the server logged 500 lines, you only see the last 36.
+
+### After: tuistory
+
+```bash
+# Start dev server
+tuistory launch "pnpm dev" -s dev
+
+# Wait until it's actually ready (reacts in ~75ms, no guessing)
+tuistory -s dev wait "ready on" --timeout 30000
+
+# Read ALL output the process has printed (not just visible screen)
+tuistory read -s dev
+
+# Later, read only NEW output since last read
+tuistory read -s dev
+
+# Read entire buffered log (up to 1MB)
+tuistory read -s dev --all
+
+# Stop
+tuistory -s dev press ctrl c
+tuistory -s dev close
+```
+
+**How `wait` replaces `sleep`:** Instead of sleeping for a fixed duration, `wait` polls the terminal reactively. Every time the process emits new output, tuistory checks if it matches your pattern. The moment "ready on" appears, it returns — typically within ~75ms. If it never appears, you get a clear timeout error with the current screen content.
+
+**How `read` replaces `capture-pane`:** `snapshot` shows the current visible screen (like taking a photo of a monitor). `read` gives you the full output stream — everything the process printed since your last `read` call, with ANSI escape codes stripped. If a dev server logged 500 lines, `read` returns all 500 as clean text.
+
+## CLI Usage
 
 ### Quick Start
 
@@ -45,17 +107,9 @@ tuistory -s claude wait "/[0-9]+/" --timeout 30000
 
 # Get terminal snapshot
 tuistory -s claude snapshot --trim
-# Output:
-# ╭─────────────────────────────────────────────────────────────────────────────────╮
-# │ ● Claude Code                                                                   │
-# ╰─────────────────────────────────────────────────────────────────────────────────╯
-#
-# > what is 2+2? reply with just the number
-#
-# 4
-#
-# ────────────────────────────────────────────────────────────────────────────────────
-# > 
+
+# Read all process output (full log, not just visible screen)
+tuistory read -s claude --all
 
 # Close the session
 tuistory -s claude close
@@ -101,7 +155,9 @@ tuistory -s debug close
 
 ```bash
 tuistory launch <command>     # Start a terminal session
-tuistory snapshot             # Get terminal text content
+tuistory snapshot             # Get current terminal screen as text
+tuistory read                 # Get new process output since last read
+tuistory screenshot           # Capture terminal as image (JPEG/PNG/WebP)
 tuistory type <text>          # Type text character by character
 tuistory press <key> [keys]   # Press key(s): enter, ctrl c, alt f4
 tuistory click <pattern>      # Click on text matching pattern
@@ -111,7 +167,6 @@ tuistory scroll <up|down>     # Scroll the terminal
 tuistory resize <cols> <rows> # Resize terminal
 tuistory close                # Close a session
 tuistory sessions             # List active sessions
-tuistory daemon-stop          # Stop the background daemon
 ```
 
 ### Options
@@ -124,36 +179,36 @@ tuistory daemon-stop          # Stop the background daemon
 --timeout <ms>        # Wait timeout in milliseconds
 --trim                # Trim whitespace from snapshot
 --json                # Output as JSON
+--all                 # For read: return entire buffer
+--follow              # For read: block until new output
 ```
 
 ### Tips for Successful Automation
 
-**Run `snapshot` after every command** - Terminal applications are stateful and may show dialogs, prompts, or errors. Always check the current state:
+**Run `snapshot` after every action** — Terminal applications are stateful and may show dialogs, prompts, or errors. Always check the current state:
 
 ```bash
 tuistory -s mysession press enter
 tuistory -s mysession snapshot --trim  # See what happened
 ```
 
-**Handle interactive dialogs** - Many CLI applications show first-run dialogs (trust prompts, terms acceptance, login screens). You need to navigate these before your automation can proceed:
+**Use `read` for log-heavy processes** — When a process outputs more than fits on screen, `snapshot` only shows the visible portion. Use `read` to get the full output stream:
 
 ```bash
-# Example: Claude Code may show trust/terms dialogs on first run
-tuistory launch "claude" -s claude
-tuistory -s claude snapshot --trim          # Check current state
-tuistory -s claude press enter              # Accept dialog
-tuistory -s claude snapshot --trim          # Verify it worked
+tuistory launch "npm test" -s test
+tuistory -s test wait "Tests:" --timeout 60000
+tuistory read -s test  # Get ALL test output, not just last screenful
 ```
 
-**Ensure applications are authenticated** - Some CLIs require login. Run authentication commands first:
+**Use `wait-idle` when you don't know what to wait for** — If you just need the process to finish its initial burst of output before reading, `wait-idle` waits until the terminal stops receiving data:
 
 ```bash
-tuistory -s claude type "/login"
-tuistory -s claude press enter
-tuistory -s claude snapshot --trim          # Follow login prompts
+tuistory launch "npm test" -s test
+tuistory -s test wait-idle --timeout 10000  # Wait for output to stabilize
+tuistory read -s test                       # Read everything it printed
 ```
 
-**Use `wait` for async operations** - Don't assume commands complete instantly:
+**Use `wait` for async operations** — Don't assume commands complete instantly:
 
 ```bash
 tuistory -s mysession type "long-running-command"
@@ -162,11 +217,9 @@ tuistory -s mysession wait "Done" --timeout 60000  # Wait for completion
 tuistory -s mysession snapshot --trim
 ```
 
-**Debug with frequent snapshots** - When automation fails, add snapshots between each step to see where it went wrong.
+## Library Usage (Playwright for terminals)
 
-## Library Usage
-
-Use tuistory programmatically in your tests or scripts:
+Use tuistory programmatically in your tests or scripts — like Playwright, but for terminal apps:
 
 ```ts
 import { launchTerminal } from 'tuistory'
@@ -192,18 +245,11 @@ expect(initialText).toMatchInlineSnapshot(`
 await session.type('/help')
 await session.press('enter')
 
-const helpText = await session.text()
-expect(helpText).toMatchInlineSnapshot(`
-  "
-   ▐▛███▜▌   Claude Code v2.0.53
-  ▝▜█████▛▘  Opus 4.5 · Claude Max
-    ▘▘ ▝▝    ~/my-project
+// Read all process output (full stream, not just visible screen)
+const output = session.read()
 
-  ────────────────────────────────────────────────────────────────────────────────────────────────────
-  > Try "create a util logging.py that..."
-  ────────────────────────────────────────────────────────────────────────────────────────────────────
-  "
-`)
+// Read entire buffered output
+const allOutput = session.readAll()
 
 await session.press(['ctrl', 'c'])
 session.close()
@@ -251,7 +297,7 @@ await session.press(['ctrl', 'shift', 'a'])
 
 ### `session.text(options?)`
 
-Get the current terminal text.
+Get the current terminal screen text.
 
 ```ts
 const text = await session.text()
@@ -259,6 +305,15 @@ const text = await session.text()
 // Filter by style
 const boldText = await session.text({ only: { bold: true } })
 const coloredText = await session.text({ only: { foreground: '#ff0000' } })
+```
+
+### `session.read()`
+
+Read new process output since the last `read()` call. Returns clean text with ANSI codes stripped. Each call advances the cursor — the next call only returns newer output.
+
+```ts
+const newOutput = session.read()   // new since last read
+const allOutput = session.readAll() // entire buffer (up to 1MB)
 ```
 
 ### `session.waitForText(pattern, options?)`

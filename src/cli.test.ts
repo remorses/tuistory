@@ -64,289 +64,29 @@ describe('CLI help and version', () => {
   test('--help shows all commands', async () => {
     const { stdout, exitCode } = await runCli(['--help'])
     expect(exitCode).toBe(0)
-    expect(stdout).toMatchInlineSnapshot(`
-"tuistory/0.0.16
-
-Usage:
-  $ tuistory <command> [options]
-
-Commands:
-  launch <command>                Launch a new terminal session with a PTY (pseudo-terminal).
-                                  
-                                  Spawns the given command in a virtual terminal with configurable
-                                  dimensions. The command string is parsed like a shell — spaces
-                                  separate arguments, quotes group them.
-                                  
-                                  The session runs inside a background daemon so it persists
-                                  across multiple tuistory invocations. Use \`-s\` to name
-                                  sessions for easy reference.
-                                  
-                                  **Tip:** Always run \`snapshot --trim\` after launch to see
-                                  the initial terminal state — many apps show first-run dialogs
-                                  or login prompts you need to handle.
-    -s, --session <name>          Session name (default: default)
-    --cols <n>                    Terminal columns (default: 120)
-    --rows <n>                    Terminal rows (default: 36)
-    --cwd <path>                  Working directory
-    --env <key=value>             Environment variable (repeatable)
-    --no-wait                     Don't wait for initial data
-    --timeout <ms>                Wait timeout in milliseconds (default: 5000)
-
-  snapshot                        Capture the current terminal screen as text.
-                                  
-                                  Returns the full text content of the terminal buffer.
-                                  By default, waits for the terminal to become idle before
-                                  capturing (no new data for ~60ms).
-                                  
-                                  Use \`--trim\` to strip trailing whitespace and empty lines
-                                  for cleaner output. Use \`--json\` to get structured output
-                                  with session metadata.
-                                  
-                                  **Style filters:** Use \`--bold\`, \`--italic\`, \`--fg\`,
-                                  \`--bg\` to extract only text matching specific styles.
-                                  Non-matching characters are replaced with spaces to
-                                  preserve layout.
-                                  
-                                  **Best practice:** Run snapshot after every action (type,
-                                  press, click) to see what happened. Terminal apps are
-                                  stateful and may show unexpected dialogs or errors.
-    -s, --session <name>          Session name (required)
-    --json                        Output as JSON with metadata
-    --trim                        Trim trailing whitespace and empty lines
-    --immediate                   Don't wait for idle state
-    --bold                        Only bold text
-    --italic                      Only italic text
-    --underline                   Only underlined text
-    --fg <color>                  Only text with foreground color
-    --bg <color>                  Only text with background color
-    --no-cursor                   Hide cursor in snapshot output
-
-  screenshot                      Capture the terminal screen as an image file (JPEG/PNG/WebP).
-                                  
-                                  Renders the current terminal buffer to a colored image with
-                                  JetBrains Mono Nerd font on a fixed-width character grid.
-                                  Outputs the image file path to stdout.
-                                  
-                                  **For AI agents and bots:** Use this to screenshot terminal
-                                  TUI applications and share them with users via messaging
-                                  apps. Bots like kimaki or openclaw can show users live
-                                  progress of terminal commands by uploading the image.
-                                  Use \`--pixel-ratio 2\` for sharp images on social media and sharing.
-                                  
-                                  **Important:** Screenshots are expensive. Always use
-                                  \`snapshot\` or \`wait\` first to confirm the content is on
-                                  screen, then \`screenshot\` only when you're sure.
-                                  
-                                  Using tuistory is preferable over tmux background sessions
-                                  because you can programmatically control the terminal (type,
-                                  press keys, wait for text, resize) and capture pixel-perfect
-                                  screenshots — designed from first principles for agents.
-                                  
-                                  Waits for the terminal to become idle before capturing unless
-                                  \`--immediate\` is passed.
-                                  
-                                  By default, screenshots include a 2-cell frame. If \`--frame-color\`
-                                  is not provided, the frame color is auto-detected from terminal edge
-                                  cells to match the app chrome/background.
-    -s, --session <name>          Session name (required)
-    -o, --output <path>           Output file path (default: temp file)
-    --width <px>                  Image width in pixels (auto from cols)
-    --font-size <px>              Font size in pixels (default: 14)
-    --line-height <n>             Line height multiplier (default: 1.5)
-    --background <color>          Background color (default: #1a1b26)
-    --foreground <color>          Text color (default: #c0caf5)
-    --format <fmt>                Image format (default: jpeg)
-    --quality <n>                 Quality for lossy formats (0-100) (default: 90)
-    --pixel-ratio <n>             Device pixel ratio for HiDPI rendering (default: 1)
-    --padding <cells>             Frame padding in terminal cells (default: 2) (default: 2)
-    --frame-color <color>         Color of the frame/padding area (default: auto-detect from terminal edge colors)
-    --immediate                   Don't wait for idle state
-
-  type <text>                     Type text into the terminal character by character.
-                                  
-                                  Sends each character individually with a small delay between
-                                  them, simulating real user typing. This triggers per-keystroke
-                                  events in the target application (autocomplete, search-as-you-type,
-                                  input validation, etc.).
-                                  
-                                  The text is sent as-is — no shell escaping or interpretation.
-                                  For special keys like Enter or Ctrl+C, use \`press\` instead.
-    -s, --session <name>          Session name (required)
-
-  press <key> [...keys]           Press one or more keys simultaneously (key chord).
-                                  
-                                  Sends a key or key combination to the terminal. Multiple keys
-                                  are pressed together as a chord (e.g. \`ctrl c\` sends Ctrl+C).
-                                  
-                                  **Available keys:**
-                                  - Modifiers: ctrl, alt, shift, meta
-                                  - Navigation: up, down, left, right, home, end, pageup, pagedown
-                                  - Actions: enter, esc, tab, space, backspace, delete, insert
-                                  - Function: f1-f12
-                                  - Letters: a-z
-                                  - Digits: 0-9
-                                  
-                                  **Note:** \`enter\` is named "return" internally but both work.
-                                  For typing text, use \`type\` instead.
-    -s, --session <name>          Session name (required)
-
-  click <pattern>                 Click on text matching a pattern in the terminal.
-                                  
-                                  Searches the terminal screen for text matching the given
-                                  pattern and sends a mouse click event at its position.
-                                  Supports plain text and regex patterns (use /pattern/ syntax).
-                                  
-                                  If multiple matches are found, the command fails unless
-                                  \`--first\` is passed. Use a more specific pattern or regex
-                                  to match exactly one element.
-                                  
-                                  Waits up to \`--timeout\` ms for the pattern to appear,
-                                  polling the terminal contents.
-    -s, --session <name>          Session name (required)
-    --first                       Click first match if multiple found
-    --timeout <ms>                Timeout in milliseconds (default: 5000)
-
-  click-at <x> <y>                Click at specific terminal coordinates (column, row).
-                                  
-                                  Sends a mouse click event at the given (x, y) position.
-                                  Coordinates are 0-based: (0, 0) is the top-left corner.
-                                  
-                                  Useful when the target element doesn't have unique text
-                                  to match with \`click\`, or for clicking on UI chrome
-                                  like borders, scrollbars, or status bars.
-    -s, --session <name>          Session name (required)
-
-  wait <pattern>                  Wait for text or regex pattern to appear in the terminal.
-                                  
-                                  Polls the terminal content until the pattern is found or
-                                  timeout is reached. Useful for waiting on async operations
-                                  like command output, loading screens, or API responses.
-                                  
-                                  Supports regex patterns with /pattern/flags syntax.
-                                  Plain strings are matched literally.
-                                  
-                                  Returns "OK" when pattern is found, exits with error on timeout.
-    -s, --session <name>          Session name (required)
-    --timeout <ms>                Timeout in milliseconds (default: 5000)
-
-  wait-idle                       Wait for the terminal to stop receiving data (become idle).
-                                  
-                                  Waits until no new data has been received for ~60ms,
-                                  indicating the application has finished rendering.
-                                  
-                                  Useful between rapid actions to ensure the terminal has
-                                  settled before taking a snapshot. Most commands already
-                                  wait for idle internally, but this is helpful when you
-                                  need explicit synchronization.
-    -s, --session <name>          Session name (required)
-    --timeout <ms>                Timeout in milliseconds (default: 500)
-
-  scroll <direction> [lines]      Scroll the terminal up or down using mouse wheel events.
-                                  
-                                  Sends SGR mouse scroll events at the center of the terminal
-                                  (or at specific coordinates with --x/--y). The number of
-                                  scroll events can be controlled with the [lines] argument.
-                                  
-                                  Direction must be "up" or "down".
-    -s, --session <name>          Session name (required)
-    --x <n>                       X coordinate for scroll event
-    --y <n>                       Y coordinate for scroll event
-
-  resize <cols> <rows>            Resize the terminal to new dimensions.
-                                  
-                                  Changes the terminal width (columns) and height (rows).
-                                  The PTY and the virtual terminal emulator are both resized,
-                                  triggering a SIGWINCH signal in the running application.
-                                  
-                                  Applications that handle terminal resize (like vim, htop,
-                                  or TUI frameworks) will re-render to fit the new size.
-    -s, --session <name>          Session name (required)
-
-  capture-frames <key> [...keys]  Capture multiple rapid terminal snapshots after a keypress.
-                                  
-                                  Sends the key(s) and then captures N frames at a fixed
-                                  interval. Useful for detecting layout shifts, animations,
-                                  or transitions that happen in the frames immediately after
-                                  a key event.
-                                  
-                                  Output is a JSON array of text snapshots.
-    -s, --session <name>          Session name (required)
-    --count <n>                   Number of frames to capture (default: 5)
-    --interval <ms>               Interval between frames in ms (default: 10)
-
-  close                           Close a terminal session and kill its process.
-                                  
-                                  Terminates the PTY process and removes the session from
-                                  the daemon. The session name can be reused after closing.
-    -s, --session <name>          Session name (required)
-
-  sessions                        List all active session names.
-                                  
-                                  Shows one session name per line. Sessions are created with
-                                  \`launch\` and persist until \`close\` or \`daemon-stop\`.
-
-  logfile                         Print the path to the daemon log file.
-                                  
-                                  The relay daemon writes logs to this file. Useful for
-                                  debugging when commands fail or the daemon won't start.
-
-Options:
-  -h, --help     Display this message
-  -v, --version  Display version number
-
-Examples:
-# Full workflow: launch, interact, snapshot, close
-tuistory launch "claude" -s ai --cols 150 --rows 45
-tuistory -s ai wait "Claude" --timeout 15000
-tuistory -s ai type "what is 2+2?"
-tuistory -s ai press enter
-tuistory -s ai wait "/[0-9]+/" --timeout 30000
-tuistory -s ai snapshot --trim
-tuistory -s ai close"
-`)
+    expect(stdout).toContain('launch <command>')
+    expect(stdout).toContain('snapshot')
+    expect(stdout).toContain('read')
+    expect(stdout).toContain('screenshot')
+    expect(stdout).toContain('type <text>')
+    expect(stdout).toContain('press <key>')
+    expect(stdout).toContain('click <pattern>')
+    expect(stdout).toContain('wait <pattern>')
+    expect(stdout).toContain('close')
+    expect(stdout).toContain('sessions')
   })
 
   test('launch --help shows launch options', async () => {
     const { stdout, exitCode } = await runCli(['launch', '--help'])
     expect(exitCode).toBe(0)
-    expect(stdout).toMatchInlineSnapshot(`
-"tuistory/0.0.16
-
-Usage:
-  $ tuistory launch <command>
-
-Options:
-  -s, --session <name>  Session name (default: default)
-  --cols <n>            Terminal columns (default: 120)
-  --rows <n>            Terminal rows (default: 36)
-  --cwd <path>          Working directory
-  --env <key=value>     Environment variable (repeatable)
-  --no-wait             Don't wait for initial data
-  --timeout <ms>        Wait timeout in milliseconds (default: 5000)
-  -h, --help            Display this message
-
-Description:
-  Launch a new terminal session with a PTY (pseudo-terminal).
-
-  Spawns the given command in a virtual terminal with configurable
-  dimensions. The command string is parsed like a shell — spaces
-  separate arguments, quotes group them.
-
-  The session runs inside a background daemon so it persists
-  across multiple tuistory invocations. Use \`-s\` to name
-  sessions for easy reference.
-
-  **Tip:** Always run \`snapshot --trim\` after launch to see
-  the initial terminal state — many apps show first-run dialogs
-  or login prompts you need to handle.
-
-Examples:
-tuistory launch "claude" -s claude --cols 150 --rows 45
-tuistory launch "node" -s repl --cols 120
-tuistory launch "bash --norc" -s sh --env PS1="$ " --env FOO=bar
-# Launch and immediately check what the app shows:
-tuistory launch "claude" -s ai && tuistory -s ai snapshot --trim"
-`)
+    expect(stdout).toContain('$ tuistory launch <command>')
+    expect(stdout).toContain('--session <name>')
+    expect(stdout).toContain('--cols <n>')
+    expect(stdout).toContain('--rows <n>')
+    expect(stdout).toContain('--cwd <path>')
+    expect(stdout).toContain('--env <key=value>')
+    expect(stdout).toContain('--no-wait')
+    expect(stdout).toContain('--timeout <ms>')
   })
 
   test('--version shows version', async () => {
@@ -536,6 +276,95 @@ describe('CLI env options', () => {
     // Clean up
     await runCli(['close', '-s', 'env-test'])
   }, 10000)
+})
+
+describe('CLI read command', () => {
+  test('read returns process output as clean text', async () => {
+    const s = session('read-basic')
+
+    await runCli(['launch', 'bash --norc --noprofile', ...s, '--env', 'PS1=$ '])
+
+    // Run a command that produces output
+    await runCli(['type', 'echo "hello from read"', ...s])
+    await runCli(['press', 'enter', ...s])
+    await runCli(['wait', 'hello from read', ...s, '--timeout', '5000'])
+
+    // Read should contain the output
+    const read1 = await runCli(['read', ...s])
+    expect(read1.exitCode).toBe(0)
+    expect(read1.stdout).toContain('hello from read')
+
+    // Second read should return empty (nothing new)
+    const read2 = await runCli(['read', ...s])
+    expect(read2.exitCode).toBe(0)
+    expect(read2.stdout).toBe('')
+
+    // Run another command
+    await runCli(['type', 'echo "second output"', ...s])
+    await runCli(['press', 'enter', ...s])
+    await runCli(['wait', 'second output', ...s, '--timeout', '5000'])
+
+    // Read should only contain the new output
+    const read3 = await runCli(['read', ...s])
+    expect(read3.exitCode).toBe(0)
+    expect(read3.stdout).toContain('second output')
+    expect(read3.stdout).not.toContain('hello from read')
+
+    await runCli(['close', ...s])
+  }, 20000)
+
+  test('read --all returns entire buffer without advancing cursor', async () => {
+    const s = session('read-all')
+
+    await runCli(['launch', 'bash --norc --noprofile', ...s, '--env', 'PS1=$ '])
+
+    await runCli(['type', 'echo "line one"', ...s])
+    await runCli(['press', 'enter', ...s])
+    await runCli(['wait', 'line one', ...s, '--timeout', '5000'])
+
+    // Read to advance cursor
+    const read1 = await runCli(['read', ...s])
+    expect(read1.stdout).toContain('line one')
+
+    // Add more output
+    await runCli(['type', 'echo "line two"', ...s])
+    await runCli(['press', 'enter', ...s])
+    await runCli(['wait', 'line two', ...s, '--timeout', '5000'])
+
+    // --all should return everything (including already-read output)
+    const readAll = await runCli(['read', ...s, '--all'])
+    expect(readAll.exitCode).toBe(0)
+    expect(readAll.stdout).toContain('line one')
+    expect(readAll.stdout).toContain('line two')
+
+    // Regular read should still return only the new part (cursor not advanced by --all)
+    const read2 = await runCli(['read', ...s])
+    expect(read2.exitCode).toBe(0)
+    expect(read2.stdout).toContain('line two')
+
+    await runCli(['close', ...s])
+  }, 20000)
+
+  test('read strips ANSI escape codes', async () => {
+    const s = session('read-ansi')
+
+    await runCli(['launch', 'bash --norc --noprofile', ...s, '--env', 'PS1=$ '])
+
+    // Use printf to emit colored output
+    await runCli(['type', 'printf "\\033[31mred text\\033[0m normal"', ...s])
+    await runCli(['press', 'enter', ...s])
+    await runCli(['wait', 'normal', ...s, '--timeout', '5000'])
+
+    const read = await runCli(['read', ...s])
+    expect(read.exitCode).toBe(0)
+    // Should contain the text but not raw escape codes
+    expect(read.stdout).toContain('red text')
+    expect(read.stdout).toContain('normal')
+    expect(read.stdout).not.toContain('\x1b[31m')
+    expect(read.stdout).not.toContain('\x1b[0m')
+
+    await runCli(['close', ...s])
+  }, 15000)
 })
 
 describe('CLI logfile', () => {

@@ -1,4 +1,4 @@
-import { PersistentTerminal, StyleFlags, type TerminalData } from 'ghostty-opentui'
+import { PersistentTerminal, StyleFlags, type TerminalData, ptyToText } from 'ghostty-opentui'
 import { spawn, type IPty } from 'tuistory/pty'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -182,9 +182,15 @@ export class Session {
   private hasReceivedData = false
   private dataResolvers: Array<() => void> = []
   private closed = false
-  /** True when the PTY child process has exited but close() hasn't been called yet. */
-  private dead = false
   private showCursor: boolean
+
+  // Output buffering for `read()` — accumulates raw PTY data so callers can
+  // retrieve new output since their last read, like a streaming log.
+  private outputChunks: string[] = []
+  private outputTotalBytes = 0
+  private outputReadIndex = 0  // index into outputChunks up to which read() has consumed
+  private outputReadByteOffset = 0  // byte offset within the chunk at outputReadIndex
+  private readonly maxOutputBytes = 1_000_000 // 1MB ring buffer cap
   /** Exit info from the PTY process, null if still running. */
   exitInfo: { exitCode: number; signal: number } | null = null
   private exitListeners: Array<(info: { exitCode: number; signal: number }) => void> = []
@@ -226,6 +232,22 @@ export class Session {
     this.pty.onData((data) => {
       if (this.closed) return
       this.term.feed(data)
+
+      // Accumulate raw output for read() — drop oldest chunks when over cap
+      this.outputChunks.push(data)
+      this.outputTotalBytes += data.length
+      while (this.outputTotalBytes > this.maxOutputBytes && this.outputChunks.length > 1) {
+        const dropped = this.outputChunks.shift()!
+        this.outputTotalBytes -= dropped.length
+        // Adjust read cursor if it pointed into dropped chunks
+        if (this.outputReadIndex > 0) {
+          this.outputReadIndex--
+        } else {
+          // Reader was behind the dropped chunk — data is lost, reset byte offset
+          this.outputReadByteOffset = 0
+        }
+      }
+
       if (!this.hasReceivedData) {
         this.hasReceivedData = true
         const dataResolvers = this.dataResolvers.splice(0)
@@ -719,6 +741,49 @@ export class Session {
     const scrollEvent = `\x1b[<65;${xPos};${yPos}M`
     this.pty.write(scrollEvent.repeat(lines))
     return this.waitIdle()
+  }
+
+  /**
+   * Read new process output since the last `read()` call.
+   * Returns clean text with ANSI escape codes stripped.
+   * Advances the read cursor so the next call only returns newer output.
+   */
+  read(): string {
+    if (this.outputReadIndex >= this.outputChunks.length) {
+      return ''
+    }
+    let raw = ''
+    // Partial first chunk if byte offset is non-zero
+    if (this.outputReadByteOffset > 0 && this.outputReadIndex < this.outputChunks.length) {
+      raw += this.outputChunks[this.outputReadIndex].slice(this.outputReadByteOffset)
+      this.outputReadIndex++
+      this.outputReadByteOffset = 0
+    }
+    // Remaining full chunks
+    while (this.outputReadIndex < this.outputChunks.length) {
+      raw += this.outputChunks[this.outputReadIndex]
+      this.outputReadIndex++
+    }
+    if (!raw) return ''
+    return ptyToText(raw)
+  }
+
+  /**
+   * Read the entire buffered output (up to 1MB).
+   * Returns clean text with ANSI escape codes stripped.
+   * Does NOT advance the read cursor.
+   */
+  readAll(): string {
+    if (this.outputChunks.length === 0) return ''
+    const raw = this.outputChunks.join('')
+    return ptyToText(raw)
+  }
+
+  /**
+   * Check if there is unread output available.
+   */
+  hasUnreadOutput(): boolean {
+    return this.outputReadIndex < this.outputChunks.length
   }
 
   /** Get the raw terminal data for image rendering or other processing */

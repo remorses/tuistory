@@ -330,6 +330,94 @@ function createCliWithActions(
     })
 
   cli
+    .command('read', dedent`
+      Read new process output since the last \`read\` call.
+
+      Returns all text the process has printed since you last called
+      \`read\` on this session. ANSI escape codes are stripped — you
+      get clean, readable text.
+
+      Unlike \`snapshot\` (which shows the current visible screen),
+      \`read\` gives you the full output stream. If a process printed
+      500 lines but only 36 fit on screen, \`snapshot\` shows the last
+      36 — \`read\` gives you all 500.
+
+      Each call advances a cursor, so the next \`read\` only returns
+      newer output. Use \`--all\` to get the entire buffered output
+      (up to 1MB) without advancing the cursor.
+
+      Use \`--follow\` to block until new output arrives — like
+      \`tail -f\` but for any process managed by tuistory.
+
+      **Replaces \`sleep\` + \`tmux capture-pane\`** — instead of
+      guessing how long to wait, \`read --follow\` reacts the moment
+      new output appears.
+    `)
+    .option('-s, --session <name>', 'Session name (required)')
+    .option('--all', 'Return entire buffered output (up to 1MB), without advancing read cursor')
+    .option('--follow', 'Block until new output arrives, then return it')
+    .option('--timeout <ms>', z.number().default(5000).describe('Timeout for --follow in milliseconds'))
+    .example('tuistory read -s myapp')
+    .example('tuistory read -s myapp --all')
+    .example('tuistory read -s myapp --follow --timeout 30000')
+    .example(dedent`
+      # Launch a dev server and read its full startup output:
+      tuistory launch "pnpm dev" -s dev
+      tuistory -s dev wait "ready" --timeout 30000
+      tuistory read -s dev
+    `)
+    .example(dedent`
+      # Run a command, wait for it to stabilize, then read output:
+      tuistory launch "npm test" -s test
+      tuistory -s test wait-idle --timeout 10000
+      tuistory read -s test
+    `)
+    .action(async (options: {
+      session?: string
+      all?: boolean
+      follow?: boolean
+      timeout: number
+    }) => {
+      const sessionName = requireSession(options)
+      if (!sessionName) return
+
+      const session = getSession(sessionName)
+      if (!session) return
+
+      if (options.all) {
+        ctx.stdout = session.readAll()
+        return
+      }
+
+      if (options.follow) {
+        // If there's already unread output, return it immediately
+        if (session.hasUnreadOutput()) {
+          ctx.stdout = session.read()
+          return
+        }
+        // Poll for new output until timeout — waitIdle resolves after each
+        // batch of PTY data settles (60ms debounce), so we check repeatedly
+        const startTime = Date.now()
+        while (Date.now() - startTime < options.timeout) {
+          await errore.tryAsync({
+            try: () => session.waitIdle({ timeout: Math.min(500, options.timeout - (Date.now() - startTime)) }),
+            catch: () => new Error('idle timeout'),
+          })
+          if (session.hasUnreadOutput()) {
+            ctx.stdout = session.read()
+            return
+          }
+        }
+        // Timed out with no new output
+        ctx.stderr = `No new output after ${options.timeout}ms`
+        ctx.exitCode = 1
+        return
+      }
+
+      ctx.stdout = session.read()
+    })
+
+  cli
     .command('screenshot', dedent`
       Capture the terminal screen as an image file (JPEG/PNG/WebP).
 
