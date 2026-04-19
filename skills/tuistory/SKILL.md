@@ -26,7 +26,7 @@ Every time you use tuistory, you MUST run these two commands first. NEVER pipe t
 tuistory --help
 
 # Full README with API docs, examples, and testing patterns
-curl -s https://raw.githubusercontent.com/remorses/termcast/refs/heads/main/tuistory/README.md
+curl -s https://raw.githubusercontent.com/remorses/termcast/refs/heads/main/README.md
 ```
 
 ## Key rules
