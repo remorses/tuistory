@@ -187,11 +187,11 @@ export class Session {
   // Output buffering for `read()` — accumulates raw PTY data so callers can
   // retrieve new output since their last read, like a streaming log.
   private outputChunks: string[] = []
-  private outputTotalBytes = 0
+  private outputTotalChars = 0
   private outputReadIndex = 0  // index into outputChunks up to which read() has consumed
-  private outputReadByteOffset = 0  // byte offset within the chunk at outputReadIndex
-  private readonly maxOutputBytes = 1_000_000 // 1MB ring buffer cap
+  private readonly maxOutputChars = 1_000_000 // ~1M character ring buffer cap
   /** Exit info from the PTY process, null if still running. */
+  private dead = false
   exitInfo: { exitCode: number; signal: number } | null = null
   private exitListeners: Array<(info: { exitCode: number; signal: number }) => void> = []
 
@@ -235,16 +235,13 @@ export class Session {
 
       // Accumulate raw output for read() — drop oldest chunks when over cap
       this.outputChunks.push(data)
-      this.outputTotalBytes += data.length
-      while (this.outputTotalBytes > this.maxOutputBytes && this.outputChunks.length > 1) {
+      this.outputTotalChars += data.length
+      while (this.outputTotalChars > this.maxOutputChars && this.outputChunks.length > 1) {
         const dropped = this.outputChunks.shift()!
-        this.outputTotalBytes -= dropped.length
+        this.outputTotalChars -= dropped.length
         // Adjust read cursor if it pointed into dropped chunks
         if (this.outputReadIndex > 0) {
           this.outputReadIndex--
-        } else {
-          // Reader was behind the dropped chunk — data is lost, reset byte offset
-          this.outputReadByteOffset = 0
         }
       }
 
@@ -747,18 +744,20 @@ export class Session {
    * Read new process output since the last `read()` call.
    * Returns clean text with ANSI escape codes stripped.
    * Advances the read cursor so the next call only returns newer output.
+   *
+   * Waits for the terminal parser to be in ground state before reading,
+   * so partial ANSI escape sequences are never split across reads.
    */
   read(): string {
     if (this.outputReadIndex >= this.outputChunks.length) {
       return ''
     }
-    let raw = ''
-    // Partial first chunk if byte offset is non-zero
-    if (this.outputReadByteOffset > 0 && this.outputReadIndex < this.outputChunks.length) {
-      raw += this.outputChunks[this.outputReadIndex].slice(this.outputReadByteOffset)
-      this.outputReadIndex++
-      this.outputReadByteOffset = 0
+    // Don't read while parser is mid-escape-sequence — the raw chunks would
+    // contain a partial sequence that ptyToText can't strip cleanly.
+    if (!this.term.isReady()) {
+      return ''
     }
+    let raw = ''
     // Remaining full chunks
     while (this.outputReadIndex < this.outputChunks.length) {
       raw += this.outputChunks[this.outputReadIndex]
