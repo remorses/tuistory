@@ -8,10 +8,10 @@
 // This file runs exclusively under Bun (the CLI re-spawns under Bun if needed),
 // so we use the native WebSocket API available in Bun's global scope.
 
-import { createCliRenderer, TextAttributes } from '@opentui/core'
+import { createCliRenderer, TextAttributes, type MouseEvent as OpenTUIMouseEvent } from '@opentui/core'
 import { createRoot, useKeyboard, useTerminalDimensions, useOnResize, extend } from '@opentui/react'
 import { GhosttyTerminalRenderable } from 'ghostty-opentui/terminal-buffer'
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, useCallback } from 'react'
 
 // Register the ghostty-terminal component for JSX use
 extend({ 'ghostty-terminal': GhosttyTerminalRenderable })
@@ -21,6 +21,41 @@ declare module '@opentui/react' {
   interface OpenTUIComponents {
     'ghostty-terminal': typeof GhosttyTerminalRenderable
   }
+}
+
+interface ButtonProps {
+  label: string
+  shortcut?: string
+  onPress: () => void
+}
+
+function Button({ label, shortcut, onPress }: ButtonProps) {
+  const [hovered, setHovered] = useState(false)
+
+  const handleMouseDown = useCallback(
+    (event: OpenTUIMouseEvent) => {
+      event.stopPropagation()
+      onPress()
+    },
+    [onPress],
+  )
+
+  return (
+    <box
+      onMouseDown={handleMouseDown}
+      onMouseOver={() => setHovered(true)}
+      onMouseOut={() => setHovered(false)}
+      style={{ flexDirection: 'row' }}
+    >
+      <text
+        fg={hovered ? '#ffffff' : '#1a1a1a'}
+        bg={hovered ? '#8b4513' : undefined}
+        attributes={hovered ? TextAttributes.BOLD | TextAttributes.UNDERLINE : TextAttributes.NONE}
+      >
+        {shortcut ? ` [${shortcut}] ${label} ` : ` ${label} `}
+      </text>
+    </box>
+  )
 }
 
 interface AttachViewProps {
@@ -163,8 +198,8 @@ function AttachView({ sessionName, ws, onDetach, onKill }: AttachViewProps) {
           {status && <text fg="#1a1a1a"> {status} </text>}
         </box>
         <box style={{ flexDirection: 'row' }}>
-          <text fg="#1a1a1a"> [^B D] Detach </text>
-          <text fg="#1a1a1a"> [^B X] Kill </text>
+          <Button label="Detach" shortcut="^B D" onPress={onDetach} />
+          <Button label="Kill" shortcut="^B X" onPress={onKill} />
         </box>
       </box>
     </box>

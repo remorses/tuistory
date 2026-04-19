@@ -1535,7 +1535,7 @@ async function getRelaySessions(): Promise<SessionInfo[] | Error> {
 // Run the attach command client-side. This is handled separately from
 // the normal relay forwarding because it needs direct stdin/stdout for
 // the interactive TUI.
-async function runAttachCommand() {
+async function runAttachCommand(options: { session?: string }) {
   // TODO: Remove bun re-spawn when opentui supports Node.js natively.
   // OpenTUI's Zig renderer currently requires Bun's FFI — running under
   // Node.js will fail at createCliRenderer(). Detect runtime and re-spawn.
@@ -1550,20 +1550,7 @@ async function runAttachCommand() {
     return
   }
 
-  // Parse --session / -s from argv
-  let sessionName: string | undefined
-  const args = process.argv.slice(2)
-  for (let i = 0; i < args.length; i++) {
-    if ((args[i] === '-s' || args[i] === '--session') && args[i + 1]) {
-      sessionName = args[i + 1]
-      break
-    }
-    const match = args[i].match(/^(?:-s|--session)=(.+)$/)
-    if (match) {
-      sessionName = match[1]
-      break
-    }
-  }
+  let sessionName = options.session
 
   // If no session specified, fetch list and auto-select or prompt
   if (!sessionName) {
@@ -1612,26 +1599,20 @@ async function runAttachCommand() {
 
 // CLI thin client - forwards to relay
 async function runCliClient() {
-  // Handle --help and --version locally (they don't need the relay)
-  // goke handles these flags in parse() before running any action
-  const hasHelp = process.argv.includes('--help') || process.argv.includes('-h')
-  const hasVersion = process.argv.includes('--version') || process.argv.includes('-v')
+  const inspectCtx: CommandResult = { stdout: '', stderr: '', exitCode: 0 }
+  const inspectCli = createCliWithActions(inspectCtx, new Map(), dummyLogger)
+  inspectCli.parse(process.argv, { run: false })
 
-  if (hasHelp || hasVersion) {
-    const dummyCtx: CommandResult = { stdout: '', stderr: '', exitCode: 0 }
-    const cli = createCliWithActions(dummyCtx, new Map(), dummyLogger)
-    cli.parse()
+  // Help/version are handled locally by goke during parse().
+  if (inspectCli.options.help || inspectCli.options.version) {
     return
   }
 
-  // Intercept `attach` command — it runs an interactive TUI client-side,
-  // not through the relay HTTP endpoint. Check for `attach` in argv before
-  // the normal relay forwarding path.
-  const isAttach = process.argv.some((arg, i) => i >= 2 && arg === 'attach')
-  if (isAttach && !hasHelp) {
-    // Ensure relay is running first (attach needs WebSocket connection to it)
+  // Intercept `attach` after goke parses argv for us, so the client-side path
+  // can reuse the command definition instead of manually scanning process.argv.
+  if (inspectCli.matchedCommandName === 'attach') {
     await ensureRelayRunning()
-    await runAttachCommand()
+    await runAttachCommand({ session: inspectCli.options.session })
     return
   }
 
