@@ -1585,32 +1585,23 @@ async function runAttachCommand() {
       sessionName = alive[0].name
       console.log(pc.dim(`Auto-selecting session: ${sessionName}`))
     } else {
-      // Interactive session picker using simple stdin prompt
-      console.log(pc.bold('Select a session to attach:'))
-      console.log()
-      for (let i = 0; i < alive.length; i++) {
-        const s = alive[i]
-        console.log(`  ${pc.cyan(String(i + 1))}. ${s.name} ${pc.dim(`(${s.cols}x${s.rows})`)}`)
-      }
-      console.log()
-      process.stdout.write(pc.dim('Enter number: '))
-
-      const readline = await import('node:readline')
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-      const answer = await new Promise<string>((resolve) => {
-        rl.on('line', (line) => {
-          rl.close()
-          resolve(line.trim())
-        })
+      const clack = await import('@clack/prompts')
+      const selection = await clack.select({
+        message: 'Select a session to attach',
+        options: alive.map((s) => ({
+          value: s.name,
+          label: s.name,
+          hint: `${s.cols}x${s.rows}`,
+        })),
       })
 
-      const idx = parseInt(answer, 10) - 1
-      if (isNaN(idx) || idx < 0 || idx >= alive.length) {
-        console.error(pc.red('Invalid selection'))
-        process.exit(1)
+      if (clack.isCancel(selection)) {
+        clack.cancel('Attach cancelled')
+        process.exit(0)
         return
       }
-      sessionName = alive[idx].name
+
+      sessionName = selection
     }
   }
 
