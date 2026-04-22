@@ -31,6 +31,15 @@ npm install -g tuistory
 npx tuistory --help
 ```
 
+## Agent Skill
+
+This package ships a skill file that teaches AI coding agents how and when to
+use it. Install it with:
+
+```bash
+npx -y skills add remorses/tuistory
+```
+
 ## CLI Usage
 
 ### Quick Start
@@ -347,15 +356,6 @@ session.close()
 
 - [Termcast](https://github.com/remorses/termcast): A Raycast API re-implementation for the terminal. Turns raycast extensions into TUIs. Agents use tuistory to autonomously convert Raycast extensions into TUIs and fix any missing termcast APIs.
 - [Kimaki](https://github.com/remorses/kimaki): Discord bots agents that can use Tuistory to control TTY processes like opencode, claude code and debuggers.
-
-## Agent Skill
-
-This package ships a skill file that teaches AI coding agents how and when to
-use it. Install it with:
-
-```bash
-npx -y skills add remorses/tuistory
-```
 
 ## License
 
