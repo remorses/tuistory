@@ -7,7 +7,7 @@
     <br />
 </div>
 
-tuistory is a CLI and library to control and capture terminal applications and process outputs. Like how [agent browsers](https://github.com/AiAgent-Browser/AiAgent-Browser) let AI agents drive web pages (launch, click, type, wait, screenshot), tuistory does the same for terminal apps.
+tuistory is a CLI and library to control and capture terminal applications and process outputs. Like how [agent browser](https://github.com/vercel-labs/agent-browser) let AI agents drive web pages (launch, click, type, wait, screenshot), tuistory does the same for terminal apps.
 
 - **Launch** processes in named background sessions (replaces tmux for automation)
 - **Type** text and **press** keys (Enter, Ctrl+C, arrow keys, chords)
