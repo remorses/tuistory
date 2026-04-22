@@ -2,7 +2,7 @@
     <br />
     <br />
     <h3>tuistory</h3>
-    <p>agent-browser for TUIs. type, screenshot, click. Designed for AI agents.</p>
+    <p>Like agent-browser but for TUIs. type, screenshot, click. Designed for AI agents.</p>
     <br />
     <br />
 </div>
