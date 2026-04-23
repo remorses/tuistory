@@ -200,7 +200,7 @@ function createCliWithActions(
       // `--no-wait` produces `noWait?: boolean` on the inferred type
       noWait?: boolean
       timeout: number
-    }) => {
+    }, { process }) => {
       // Check for duplicate session name
       if (sessions.has(options.session)) {
         ctx.stderr = `Session "${options.session}" already exists. Use a different name or close it first.`
@@ -217,7 +217,7 @@ function createCliWithActions(
         args: isWindows ? ['/c', command] : ['-c', command],
         cols: options.cols,
         rows: options.rows,
-        cwd: options.cwd,
+        cwd: options.cwd ?? process.cwd,
         env,
         label: command,
       }))
@@ -493,7 +493,7 @@ function createCliWithActions(
       padding: number
       frameColor?: string
       immediate?: boolean
-    }) => {
+    }, { fs }) => {
       const sessionName = requireSession(options)
       if (!sessionName) return
 
@@ -542,7 +542,10 @@ function createCliWithActions(
       }
 
       const outputPath = options.output ?? path.join(os.tmpdir(), `tuistory-screenshot-${Date.now()}.${options.format}`)
-      const written = errore.try(() => fs.writeFileSync(outputPath, image))
+      const written = await errore.tryAsync({
+        try: () => fs.writeFile(outputPath, image),
+        catch: (e) => e,
+      })
       if (written instanceof Error) {
         ctx.stderr = new SessionCommandError({ operation: 'screenshot', session: sessionName, reason: errorReason(written), cause: written }).message
         ctx.exitCode = 1
@@ -1398,44 +1401,33 @@ async function startRelayServer() {
 
     const ctx: CommandResult = { stdout: '', stderr: '', exitCode: 0 }
     const cli = createCliWithActions(ctx, sessions, logger, {
+      cwd,
       stdout: createCommandResultStream(ctx, 'stdout'),
       stderr: createCommandResultStream(ctx, 'stderr'),
       exit: (code) => { throw new GokeProcessExit(code) },
     })
 
-    const previousCwd = process.cwd()
+    const parsed = errore.try(() => cli.parse(argv, { run: false }))
+    if (parsed instanceof GokeProcessExit) {
+      ctx.exitCode = parsed.code
+      return c.json(ctx)
+    }
+    if (parsed instanceof Error) {
+      ctx.stderr ||= parsed.message
+      ctx.exitCode = 1
+      return c.json(ctx)
+    }
 
-    try {
-      if (cwd && cwd !== previousCwd) {
-        process.chdir(cwd)
-      }
-
-      const parsed = errore.try(() => cli.parse(argv, { run: false }))
-      if (parsed instanceof GokeProcessExit) {
-        ctx.exitCode = parsed.code
-        return c.json(ctx)
-      }
-      if (parsed instanceof Error) {
-        ctx.stderr ||= parsed.message
-        ctx.exitCode = 1
-        return c.json(ctx)
-      }
-
-      const ran = await Promise.resolve()
-        .then(() => cli.runMatchedCommand())
-        .catch((e) => e instanceof Error ? e : new Error(String(e)))
-      if (ran instanceof GokeProcessExit) {
-        ctx.exitCode = ran.code
-        return c.json(ctx)
-      }
-      if (ran instanceof Error) {
-        ctx.stderr ||= ran.message
-        ctx.exitCode = 1
-      }
-    } finally {
-      if (process.cwd() !== previousCwd) {
-        process.chdir(previousCwd)
-      }
+    const ran = await Promise.resolve()
+      .then(() => cli.runMatchedCommand())
+      .catch((e) => e instanceof Error ? e : new Error(String(e)))
+    if (ran instanceof GokeProcessExit) {
+      ctx.exitCode = ran.code
+      return c.json(ctx)
+    }
+    if (ran instanceof Error) {
+      ctx.stderr ||= ran.message
+      ctx.exitCode = 1
     }
 
     return c.json(ctx)
