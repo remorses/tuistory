@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.0
+
+1. **New `read --trim` flag** — trim trailing whitespace and empty lines from read output. Useful for cleaner snapshots without post-processing:
+
+   ```bash
+   tuistory read -s myapp --trim
+   ```
+
+2. **New `sessions --json` flag** — output session metadata as JSON for scripting:
+
+   ```bash
+   tuistory sessions --json | jq '.[] | select(.dead == false)'
+   ```
+
+   Each entry includes `name`, `command`, `cwd`, `cols`, `rows`, and `dead` fields.
+
+3. **Enhanced `sessions` output** — the default `sessions` command now shows each session's command, working directory, and alive/dead status with color coding, instead of just listing names.
+
+4. **Fixed relay crashes on invalid forwarded commands** — the daemon no longer crashes when a CLI command with invalid options is forwarded through the relay. Invalid commands now return structured error results instead of killing the relay process.
+
+5. **Better error diagnostics on relay failures** — when the relay fails to start or times out, the last 15 lines of the relay log are printed to stderr so you can diagnose the issue without manually opening the log file.
+
 ## 0.1.0
 
 1. **New `read` command** — access full process output, not just the visible screen. `snapshot` only shows what fits on the terminal viewport (e.g. 36 lines). `read` returns everything the process printed since the last call, with ANSI escape codes stripped, from a 1MB ring buffer:
