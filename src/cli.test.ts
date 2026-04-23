@@ -11,11 +11,12 @@ const CLI_PATH = new URL('./cli.ts', import.meta.url).pathname
 const TEST_PID_FILE = `/tmp/tuistory/relay-${process.env.TUISTORY_PORT}.pid`
 
 // Helper to run CLI command
-async function runCli(args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+async function runCli(args: string[], options: { cwd?: string } = {}): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const proc = spawn(['bun', CLI_PATH, ...args], {
     stdout: 'pipe',
     stderr: 'pipe',
     env: { ...process.env, TUISTORY_PORT: process.env.TUISTORY_PORT },
+    cwd: options.cwd,
   })
 
   const stdout = await new Response(proc.stdout).text()
@@ -127,6 +128,28 @@ describe('CLI basic workflow', () => {
     const close = await runCli(['close', '-s', 'test-basic'])
     expect(close.exitCode).toBe(0)
     expect(close.stdout).toBe('Session "test-basic" closed')
+  }, 15000)
+
+  test('launch uses the caller cwd by default', async () => {
+    const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tuistory-cli-cwd-')))
+
+    try {
+      const launch = await runCli(['launch', 'pwd', '-s', 'cwd-test'], { cwd })
+      expect(launch.exitCode).toBe(0)
+
+      const output = await runCli(['read', '-s', 'cwd-test', '--all', '--trim'])
+      expect(output.exitCode).toBe(0)
+      expect(output.stdout).toBe(cwd)
+
+      const sessions = await runCli(['sessions'])
+      expect(sessions.exitCode).toBe(0)
+      expect(sessions.stdout).toContain(`cwd: ${cwd}`)
+
+      const close = await runCli(['close', '-s', 'cwd-test'])
+      expect(close.exitCode).toBe(0)
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true })
+    }
   }, 15000)
 })
 

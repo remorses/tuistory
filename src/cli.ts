@@ -1394,7 +1394,7 @@ async function startRelayServer() {
   }))
 
   app.post('/cli', async (c) => {
-    const { argv } = await c.req.json() as { argv: string[] }
+    const { argv, cwd } = await c.req.json() as { argv: string[]; cwd?: string }
 
     const ctx: CommandResult = { stdout: '', stderr: '', exitCode: 0 }
     const cli = createCliWithActions(ctx, sessions, logger, {
@@ -1403,27 +1403,39 @@ async function startRelayServer() {
       exit: (code) => { throw new GokeProcessExit(code) },
     })
 
-    const parsed = errore.try(() => cli.parse(argv, { run: false }))
-    if (parsed instanceof GokeProcessExit) {
-      ctx.exitCode = parsed.code
-      return c.json(ctx)
-    }
-    if (parsed instanceof Error) {
-      ctx.stderr ||= parsed.message
-      ctx.exitCode = 1
-      return c.json(ctx)
-    }
+    const previousCwd = process.cwd()
 
-    const ran = await Promise.resolve()
-      .then(() => cli.runMatchedCommand())
-      .catch((e) => e instanceof Error ? e : new Error(String(e)))
-    if (ran instanceof GokeProcessExit) {
-      ctx.exitCode = ran.code
-      return c.json(ctx)
-    }
-    if (ran instanceof Error) {
-      ctx.stderr ||= ran.message
-      ctx.exitCode = 1
+    try {
+      if (cwd && cwd !== previousCwd) {
+        process.chdir(cwd)
+      }
+
+      const parsed = errore.try(() => cli.parse(argv, { run: false }))
+      if (parsed instanceof GokeProcessExit) {
+        ctx.exitCode = parsed.code
+        return c.json(ctx)
+      }
+      if (parsed instanceof Error) {
+        ctx.stderr ||= parsed.message
+        ctx.exitCode = 1
+        return c.json(ctx)
+      }
+
+      const ran = await Promise.resolve()
+        .then(() => cli.runMatchedCommand())
+        .catch((e) => e instanceof Error ? e : new Error(String(e)))
+      if (ran instanceof GokeProcessExit) {
+        ctx.exitCode = ran.code
+        return c.json(ctx)
+      }
+      if (ran instanceof Error) {
+        ctx.stderr ||= ran.message
+        ctx.exitCode = 1
+      }
+    } finally {
+      if (process.cwd() !== previousCwd) {
+        process.chdir(previousCwd)
+      }
     }
 
     return c.json(ctx)
@@ -1693,7 +1705,7 @@ async function runCliClient() {
     try: () => fetch(`http://127.0.0.1:${RELAY_PORT}/cli`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ argv: process.argv }),
+      body: JSON.stringify({ argv: process.argv, cwd: process.cwd() }),
     }),
     catch: (e) => new RelayConnectionError({ port: String(RELAY_PORT), reason: errorReason(e), cause: e }),
   })
