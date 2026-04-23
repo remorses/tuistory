@@ -6,7 +6,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import * as errore from 'errore'
-import { goke } from 'goke'
+import { goke, GokeProcessExit, type GokeOptions } from 'goke'
 import { z } from 'zod'
 import dedent from 'string-dedent'
 import pc from 'picocolors'
@@ -89,6 +89,14 @@ function createFileLogger(logFilePath: string = LOG_FILE_PATH): Logger {
   }
 }
 
+function createCommandResultStream(ctx: CommandResult, key: 'stdout' | 'stderr') {
+  return {
+    write(data: string) {
+      ctx[key] += data
+    },
+  }
+}
+
 // Command result interface
 interface CommandResult {
   stdout: string
@@ -128,8 +136,9 @@ function createCliWithActions(
   ctx: CommandResult,
   sessions: Map<string, Session>,
   logger: Logger,
+  gokeOptions?: GokeOptions,
 ) {
-  const cli = goke('tuistory')
+  const cli = goke('tuistory', gokeOptions)
 
   // Helper to validate session exists
   const getSession = (sessionName: string): Session | null => {
@@ -210,6 +219,7 @@ function createCliWithActions(
         rows: options.rows,
         cwd: options.cwd,
         env,
+        label: command,
       }))
       if (session instanceof Error) {
         ctx.stderr = new SessionCommandError({ operation: 'launch', session: options.session, reason: errorReason(session), cause: session }).message
@@ -355,6 +365,7 @@ function createCliWithActions(
     `)
     .option('-s, --session <name>', 'Session name (required)')
     .option('--all', 'Return entire buffered output (up to 1MB), without advancing read cursor')
+    .option('--trim', 'Trim trailing whitespace and empty lines')
     .option('--follow', 'Block until new output arrives, then return it')
     .option('--timeout <ms>', z.number().default(5000).describe('Timeout for --follow in milliseconds'))
     .example('tuistory read -s myapp')
@@ -375,6 +386,7 @@ function createCliWithActions(
     .action(async (options: {
       session?: string
       all?: boolean
+      trim?: boolean
       follow?: boolean
       timeout: number
     }) => {
@@ -385,14 +397,15 @@ function createCliWithActions(
       if (!session) return
 
       if (options.all) {
-        ctx.stdout = session.readAll()
+        ctx.stdout = options.trim ? session.readAll().trimEnd() : session.readAll()
         return
       }
 
       if (options.follow) {
         // If there's already unread output, return it immediately
         if (session.hasUnreadOutput()) {
-          ctx.stdout = session.read()
+          const output = session.read()
+          ctx.stdout = options.trim ? output.trimEnd() : output
           return
         }
         // Poll for new output until timeout — waitIdle resolves after each
@@ -404,7 +417,8 @@ function createCliWithActions(
             catch: () => new Error('idle timeout'),
           })
           if (session.hasUnreadOutput()) {
-            ctx.stdout = session.read()
+            const output = session.read()
+            ctx.stdout = options.trim ? output.trimEnd() : output
             return
           }
         }
@@ -414,7 +428,8 @@ function createCliWithActions(
         return
       }
 
-      ctx.stdout = session.read()
+      const output = session.read()
+      ctx.stdout = options.trim ? output.trimEnd() : output
     })
 
   cli
@@ -988,19 +1003,35 @@ function createCliWithActions(
 
   cli
     .command('sessions', dedent`
-      List all active session names.
+      List all active sessions with their commands and working directories.
 
-      Shows one session name per line. Sessions are created with
+      Shows session name, command, cwd, and status. Sessions are created with
       \`launch\` and persist until \`close\` or \`daemon-stop\`.
     `)
     .example('tuistory sessions')
-    .action(() => {
-      const sessionList = Array.from(sessions.keys())
-      if (sessionList.length === 0) {
+    .option('--json', 'Output as JSON')
+    .action((options: { json?: boolean }) => {
+      const entries = Array.from(sessions.entries())
+      if (entries.length === 0) {
         ctx.stdout = 'No active sessions'
-      } else {
-        ctx.stdout = sessionList.join('\n')
+        return
       }
+      if (options.json) {
+        ctx.stdout = JSON.stringify(entries.map(([name, session]) => ({
+          name,
+          command: session.currentCommand,
+          cwd: session.currentCwd,
+          cols: session.currentCols,
+          rows: session.currentRows,
+          dead: session.isDead,
+        })), null, 2)
+        return
+      }
+      const lines = entries.map(([name, session]) => {
+        const status = session.isDead ? pc.red('dead') : pc.green('alive')
+        return `${pc.bold(name)}  ${status}  ${pc.dim(session.currentCommand)}\n  cwd: ${pc.dim(session.currentCwd)}`
+      })
+      ctx.stdout = lines.join('\n')
     })
 
   cli
@@ -1262,6 +1293,8 @@ async function startRelayServer() {
       cols: session.currentCols,
       rows: session.currentRows,
       dead: session.isDead,
+      cwd: session.currentCwd,
+      command: session.currentCommand,
     }))
     return c.json(list)
   })
@@ -1364,21 +1397,32 @@ async function startRelayServer() {
     const { argv } = await c.req.json() as { argv: string[] }
 
     const ctx: CommandResult = { stdout: '', stderr: '', exitCode: 0 }
-    const cli = createCliWithActions(ctx, sessions, logger)
+    const cli = createCliWithActions(ctx, sessions, logger, {
+      stdout: createCommandResultStream(ctx, 'stdout'),
+      stderr: createCommandResultStream(ctx, 'stderr'),
+      exit: (code) => { throw new GokeProcessExit(code) },
+    })
 
     const parsed = errore.try(() => cli.parse(argv, { run: false }))
+    if (parsed instanceof GokeProcessExit) {
+      ctx.exitCode = parsed.code
+      return c.json(ctx)
+    }
     if (parsed instanceof Error) {
-      ctx.stderr = parsed.message
+      ctx.stderr ||= parsed.message
       ctx.exitCode = 1
       return c.json(ctx)
     }
 
-    const ran = await errore.tryAsync({
-      try: () => cli.runMatchedCommand(),
-      catch: (e) => new Error(errorReason(e), { cause: e }),
-    })
+    const ran = await Promise.resolve()
+      .then(() => cli.runMatchedCommand())
+      .catch((e) => e instanceof Error ? e : new Error(String(e)))
+    if (ran instanceof GokeProcessExit) {
+      ctx.exitCode = ran.code
+      return c.json(ctx)
+    }
     if (ran instanceof Error) {
-      ctx.stderr = ran.message
+      ctx.stderr ||= ran.message
       ctx.exitCode = 1
     }
 
@@ -1437,6 +1481,26 @@ async function startRelayServer() {
   console.log(`Logs: ${logger.logFilePath}`)
 }
 
+// Print the last few lines of the relay log file to stderr for diagnostics.
+// Called when the relay crashes or fails unexpectedly, so the user doesn't
+// have to manually open the log file.
+function printRelayLogTail(lines: number = 15): void {
+  try {
+    const content = fs.readFileSync(LOG_FILE_PATH, 'utf-8')
+    const allLines = content.trimEnd().split('\n')
+    const tail = allLines.slice(-lines)
+    if (tail.length > 0) {
+      console.error(pc.dim(`\n--- Last ${tail.length} lines from ${LOG_FILE_PATH} ---`))
+      for (const line of tail) {
+        console.error(pc.dim(line))
+      }
+      console.error(pc.dim(`--- end of log ---\n`))
+    }
+  } catch {
+    // Log file doesn't exist or can't be read — nothing to show
+  }
+}
+
 // Dummy logger for client-side help display
 const dummyLogger: Logger = {
   log: async () => {},
@@ -1468,6 +1532,7 @@ async function ensureRelayRunning(): Promise<void> {
     if (!started) {
       const err = new RelayStartError({ action: 'start', reason: `timed out waiting for relay on port ${RELAY_PORT}` })
       console.error(pc.red(err.message))
+      printRelayLogTail()
       console.error(pc.red(`Check logs at: ${LOG_FILE_PATH}`))
       process.exit(1)
     }
@@ -1488,6 +1553,7 @@ async function ensureRelayRunning(): Promise<void> {
             if (!started) {
               const err = new RelayStartError({ action: 'restart', reason: `timed out waiting for relay v${VERSION} on port ${RELAY_PORT}` })
               console.error(pc.red(err.message))
+              printRelayLogTail()
               console.error(pc.red(`Check logs at: ${LOG_FILE_PATH}`))
               process.exit(1)
             }
@@ -1500,6 +1566,7 @@ async function ensureRelayRunning(): Promise<void> {
         if (!started) {
           const err = new RelayStartError({ action: 'restart', reason: `timed out waiting for relay v${VERSION} after another client restarted it` })
           console.error(pc.red(err.message))
+          printRelayLogTail()
           console.error(pc.red(`Check logs at: ${LOG_FILE_PATH}`))
           process.exit(1)
         }
@@ -1514,6 +1581,8 @@ interface SessionInfo {
   cols: number
   rows: number
   dead: boolean
+  cwd: string
+  command: string
 }
 
 // Fetch session list from relay
@@ -1630,6 +1699,7 @@ async function runCliClient() {
   })
   if (response instanceof Error) {
     console.error(pc.red(response.message))
+    printRelayLogTail()
     console.error(pc.red(`Check logs at: ${LOG_FILE_PATH}`))
     process.exit(1)
   }

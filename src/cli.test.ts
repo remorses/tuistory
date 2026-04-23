@@ -231,6 +231,22 @@ describe('CLI error handling', () => {
 
     await runCli(['close', '-s', 'multi-invalid-test'])
   }, 10000)
+
+  test('invalid forwarded command does not kill relay', async () => {
+    const s = session('relay-survives-invalid-option')
+
+    await runCli(['launch', 'bash --norc --noprofile', ...s, '--env', 'PS1=$ '])
+
+    const invalid = await runCli(['read', ...s, '--bogus-option'])
+    expect(invalid.exitCode).toBe(1)
+    expect(invalid.stderr).toContain('Unknown option `--bogusOption`')
+
+    const sessions = await runCli(['sessions'])
+    expect(sessions.exitCode).toBe(0)
+    expect(sessions.stdout).toContain('relay-survives-invalid-option')
+
+    await runCli(['close', ...s])
+  }, 15000)
 })
 
 describe('CLI regex patterns', () => {
@@ -341,6 +357,23 @@ describe('CLI read command', () => {
     const read2 = await runCli(['read', ...s])
     expect(read2.exitCode).toBe(0)
     expect(read2.stdout).toContain('line two')
+
+    await runCli(['close', ...s])
+  }, 20000)
+
+  test('read --trim trims trailing newlines', async () => {
+    const s = session('read-trim')
+
+    await runCli(['launch', 'bash --norc --noprofile', ...s, '--env', 'PS1=$ '])
+
+    await runCli(['type', 'printf "trim me\\n\\n"', ...s])
+    await runCli(['press', 'enter', ...s])
+    await runCli(['wait', 'trim me', ...s, '--timeout', '5000'])
+
+    const read = await runCli(['read', ...s, '--trim'])
+    expect(read.exitCode).toBe(0)
+    expect(read.stdout.endsWith('\n')).toBe(false)
+    expect(read.stdout).toContain('trim me')
 
     await runCli(['close', ...s])
   }, 20000)
