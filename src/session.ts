@@ -12,6 +12,8 @@ export interface LaunchOptions {
   env?: Record<string, string | undefined>
   /** If true, include cursor marker in text snapshots. Default: false */
   showCursor?: boolean
+  /** Human-readable command string for display (e.g. "pnpm dev"). Falls back to command + args. */
+  label?: string
 }
 
 function sanitizeTermcastDbSuffix(suffix: string): string {
@@ -176,6 +178,7 @@ export class Session {
   private cols: number
   private rows: number
   private sessionCwd: string
+  private sessionCommand: string
   private generatedTermcastDbSuffix?: string
   private idleResolvers: Array<() => void> = []
   private idleTimer?: ReturnType<typeof setTimeout>
@@ -203,6 +206,7 @@ export class Session {
     this.rows = options.rows ?? 36
     this.showCursor = options.showCursor ?? false
     this.sessionCwd = options.cwd ?? process.cwd()
+    this.sessionCommand = options.label ?? [options.command, ...(options.args ?? [])].join(' ')
 
     this.term = new PersistentTerminal({
       cols: this.cols,
@@ -296,6 +300,14 @@ export class Session {
 
   get currentRows(): number {
     return this.rows
+  }
+
+  get currentCwd(): string {
+    return this.sessionCwd
+  }
+
+  get currentCommand(): string {
+    return this.sessionCommand
   }
 
   /**
