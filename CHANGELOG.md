@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+1. **Fixed `launch` using wrong working directory through the relay** — when you run `tuistory launch` from a project directory, the process now starts in that directory instead of the relay's startup directory. The CLI forwards your current working directory to the daemon so launched processes respect the caller's context.
+
+2. **More robust screenshot file writes** — screenshot file writes now use the goke runtime context filesystem, avoiding global process state mutations inside the daemon.
+
 ## 0.2.0
 
 1. **New `read --trim` flag** — trim trailing whitespace and empty lines from read output. Useful for cleaner snapshots without post-processing:
