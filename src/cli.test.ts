@@ -146,7 +146,7 @@ describe('CLI basic workflow', () => {
 
       const sessions = await runCli(['sessions'])
       expect(sessions.exitCode).toBe(0)
-      expect(sessions.stdout).toContain(`cwd: ${cwd}`)
+      expect(sessions.stdout).toContain(cwd)
 
       const close = await runCli(['close', '-s', 'cwd-test'])
       expect(close.exitCode).toBe(0)

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.0
+
+1. **New `launch --attach` mode for package scripts** — start a named tuistory session and immediately attach your terminal when a human runs the command, while AI agents skip the interactive attach and leave the session running for inspection:
+
+   ```bash
+   tuistory launch "bun dev" -s dev --attach
+   tuistory read -s dev --all
+   tuistory snapshot -s dev --trim
+   ```
+
+   Launched processes now receive `TUISTORY_SESSION`, and nested `tuistory launch` calls are refused so you do not accidentally create a session inside another session.
+
+2. **Launch sessions now default to the command name** — `tuistory launch "bun dev"` creates a session named `bun dev` instead of `default`, so ad-hoc sessions and package scripts show useful names without requiring `-s`.
+
+3. **New `daemon-stop` command** — stop a stale relay daemon from the client, including older daemons that cannot parse newer relay commands:
+
+   ```bash
+   tuistory daemon-stop
+   ```
+
+4. **Improved `sessions` output** — the default `tuistory sessions` view is now a YAML-like list with names, status, command, cwd, columns, and rows. Use `--json` when scripts need machine-readable output.
+
+5. **Simpler attach shortcuts** — inside `tuistory attach`, press `Ctrl+C` twice to detach or `Ctrl+X` twice to kill the session. Single key presses still pass through to the running program.
+
 ## 0.2.1
 
 1. **Fixed `launch` using wrong working directory through the relay** — when you run `tuistory launch` from a project directory, the process now starts in that directory instead of the relay's startup directory. The CLI forwards your current working directory to the daemon so launched processes respect the caller's context.
