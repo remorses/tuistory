@@ -132,6 +132,24 @@ function parseEnvOptions(env: string[] | undefined): Record<string, string> {
   return result
 }
 
+function yamlKey(key: string): string {
+  return `${ansi('36', key)}${ansi('90', ':')}`
+}
+
+function yamlString(value: string): string {
+  const quote = ansi('90', '"')
+  const escaped = value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')
+  return `${quote}${ansi('32', escaped)}${quote}`
+}
+
+function yamlNumber(value: number): string {
+  return ansi('35', String(value))
+}
+
+function ansi(code: string, value: string): string {
+  return `\x1b[${code}m${value}\x1b[39m`
+}
+
 // Create CLI with commands - actions write to ctx
 function createCliWithActions(
   ctx: CommandResult,
@@ -1036,10 +1054,16 @@ function createCliWithActions(
         })), null, 2)
         return
       }
-      const lines = entries.map(([name, session]) => {
-        const status = session.isDead ? pc.red('dead') : pc.green('alive')
-        return `${pc.bold(name)}  ${status}  ${pc.dim(session.currentCommand)}\n  cwd: ${pc.dim(session.currentCwd)}`
-      })
+      const lines = [yamlKey('sessions')]
+      for (const [name, session] of entries) {
+        const status = session.isDead ? ansi('31', 'dead') : ansi('32', 'alive')
+        lines.push(`  ${ansi('90', '-')} ${yamlKey('name')} ${yamlString(name)}`)
+        lines.push(`    ${yamlKey('status')} ${status}`)
+        lines.push(`    ${yamlKey('command')} ${yamlString(session.currentCommand)}`)
+        lines.push(`    ${yamlKey('cwd')} ${yamlString(session.currentCwd)}`)
+        lines.push(`    ${yamlKey('cols')} ${yamlNumber(session.currentCols)}`)
+        lines.push(`    ${yamlKey('rows')} ${yamlNumber(session.currentRows)}`)
+      }
       ctx.stdout = lines.join('\n')
     })
 
@@ -1056,32 +1080,20 @@ function createCliWithActions(
       ctx.stdout = LOG_FILE_PATH
     })
 
-  // daemon-stop removed: too dangerous — kills all active sessions across all
-  // users of this machine. Tests use TUISTORY_PORT for isolation instead.
-  // If you need to stop the daemon manually, use: kill $(cat /tmp/tuistory/relay-{port}.pid)
-  //
-  // cli
-  //   .command('daemon-stop', dedent`
-  //     Stop the background relay daemon.
-  //
-  //     The daemon runs as a detached process that holds all
-  //     sessions in memory. Stopping it closes all active sessions.
-  //
-  //     A new daemon is started automatically on the next command.
-  //   `)
-  //   .example('tuistory daemon-stop')
-  //   .action(async () => {
-  //     for (const [name, session] of sessions) {
-  //       session.close()
-  //       logger.log(`Session "${name}" closed on daemon-stop`)
-  //     }
-  //     sessions.clear()
-  //     try { fs.unlinkSync(PID_FILE) } catch {}
-  //     ctx.stdout = 'Daemon stopping...'
-  //     setTimeout(() => {
-  //       process.exit(0)
-  //     }, 100)
-  //   })
+  // The daemon-stop command is handled client-side so it can stop stale daemons
+  // that do not understand newer CLI commands yet.
+  cli
+    .command('daemon-stop', dedent`
+      Stop the background relay daemon.
+
+      The daemon runs as a detached process that holds all sessions in memory.
+      Stopping it closes all active sessions. A new daemon starts automatically
+      the next time you run a tuistory command.
+    `)
+    .example('tuistory daemon-stop')
+    .action(() => {
+      ctx.stdout = 'daemon-stop command must be run client-side, not through relay'
+    })
 
   // The attach command is handled client-side (not through the relay HTTP endpoint)
   // because it needs to run an interactive TUI with direct stdin/stdout access.
@@ -1676,6 +1688,17 @@ async function runAttachCommand(options: { session?: string }) {
   await runAttachTui({ sessionName, relayPort: RELAY_PORT })
 }
 
+async function runDaemonStopCommand() {
+  const serverVersion = await getRelayVersion()
+  if (serverVersion === null) {
+    console.log('No daemon running')
+    return
+  }
+
+  await killRelay()
+  console.log('Daemon stopped')
+}
+
 // CLI thin client - forwards to relay
 async function runCliClient() {
   const inspectCtx: CommandResult = { stdout: '', stderr: '', exitCode: 0 }
@@ -1691,6 +1714,11 @@ async function runCliClient() {
     console.error(pc.yellow(`Refusing to launch a nested tuistory session inside "${process.env.TUISTORY_SESSION}".`))
     console.error(pc.yellow('Run the command directly here, or launch it from a normal terminal.'))
     process.exit(1)
+  }
+
+  if (inspectCli.matchedCommandName === 'daemon-stop') {
+    await runDaemonStopCommand()
+    return
   }
 
   // Intercept `attach` after goke parses argv for us, so the client-side path

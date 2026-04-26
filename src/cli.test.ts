@@ -75,6 +75,7 @@ describe('CLI help and version', () => {
     expect(stdout).toContain('wait <pattern>')
     expect(stdout).toContain('close')
     expect(stdout).toContain('sessions')
+    expect(stdout).toContain('daemon-stop')
   })
 
   test('launch --help shows launch options', async () => {
@@ -167,6 +168,10 @@ describe('CLI concurrent sessions', () => {
     expect(sessions.exitCode).toBe(0)
     expect(sessions.stdout).toContain('session-a')
     expect(sessions.stdout).toContain('session-b')
+    expect(sessions.stdout).toContain('\x1b[36msessions\x1b[39m\x1b[90m:\x1b[39m')
+    expect(sessions.stdout).toContain('\x1b[36mname\x1b[39m\x1b[90m:\x1b[39m')
+    expect(sessions.stdout).toContain('\x1b[90m"\x1b[39m\x1b[32msession-a\x1b[39m\x1b[90m"\x1b[39m')
+    expect(sessions.stdout).toContain('\x1b[36mstatus\x1b[39m\x1b[90m:\x1b[39m \x1b[32malive\x1b[39m')
 
     // Type different things in each
     await runCli(['type', 'echo AAA', '-s', 'session-a'])
@@ -306,6 +311,22 @@ describe('CLI error handling', () => {
     expect(launch.stderr).toContain('Skipping attach because tuistory is running inside an AI agent.')
 
     await runCli(['close', ...s])
+  }, 10000)
+})
+
+describe('CLI daemon control', () => {
+  test('daemon-stop stops the relay and clears active sessions', async () => {
+    const s = session('daemon-stop-test')
+    const launch = await runCli(['launch', 'sleep 60', ...s, '--no-wait'])
+    expect(launch.exitCode).toBe(0)
+
+    const stop = await runCli(['daemon-stop'])
+    expect(stop.exitCode).toBe(0)
+    expect(stop.stdout).toBe('Daemon stopped')
+
+    const sessions = await runCli(['sessions'])
+    expect(sessions.exitCode).toBe(0)
+    expect(sessions.stdout).toBe('No active sessions')
   }, 10000)
 })
 
