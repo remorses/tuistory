@@ -16,6 +16,8 @@ import { useRef, useState, useEffect, useCallback } from 'react'
 // Register the ghostty-terminal component for JSX use
 extend({ 'ghostty-terminal': GhosttyTerminalRenderable })
 
+const DOUBLE_CTRL_TIMEOUT_MS = 450
+
 // Augment JSX types so TypeScript recognizes <ghostty-terminal>
 declare module '@opentui/react' {
   interface OpenTUIComponents {
@@ -23,13 +25,11 @@ declare module '@opentui/react' {
   }
 }
 
-interface ButtonProps {
+function Button({ label, shortcut, onPress }: {
   label: string
   shortcut?: string
   onPress: () => void
-}
-
-function Button({ label, shortcut, onPress }: ButtonProps) {
+}) {
   const [hovered, setHovered] = useState(false)
 
   const handleMouseDown = useCallback(
@@ -138,37 +138,65 @@ function AttachView({ sessionName, ws, onDetach, onKill }: AttachViewProps) {
     }
   })
 
-  // tmux-style prefix key: Ctrl+B enters prefix mode, next key is the action.
-  // Ctrl+B D → detach, Ctrl+B X → kill.
-  // If next key is unrecognized, forward both the Ctrl+B and the key to the PTY.
-  const prefixActive = useRef(false)
+  const pendingCtrlKey = useRef<{
+    key: 'c' | 'x'
+    sequence: string
+    timeout: ReturnType<typeof setTimeout>
+  } | null>(null)
+
+  const clearPendingCtrlKey = useCallback(() => {
+    if (!pendingCtrlKey.current) return
+    clearTimeout(pendingCtrlKey.current.timeout)
+    pendingCtrlKey.current = null
+  }, [])
+
+  const flushPendingCtrlKey = useCallback(() => {
+    const pending = pendingCtrlKey.current
+    if (!pending) return
+    clearPendingCtrlKey()
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(pending.sequence)
+    }
+  }, [clearPendingCtrlKey, ws])
+
+  useEffect(() => {
+    return () => clearPendingCtrlKey()
+  }, [clearPendingCtrlKey])
 
   useKeyboard((key) => {
-    if (prefixActive.current) {
-      prefixActive.current = false
+    if (key.ctrl && (key.name === 'c' || key.name === 'x') && key.sequence) {
+      const pending = pendingCtrlKey.current
 
-      if (key.name === 'd') {
+      if (pending?.key === 'c' && key.name === 'c') {
+        clearPendingCtrlKey()
         onDetach()
         return
       }
-      if (key.name === 'x') {
+      if (pending?.key === 'x' && key.name === 'x') {
+        clearPendingCtrlKey()
         onKill()
         return
       }
 
-      // Unrecognized key after prefix — forward the buffered Ctrl+B + this key
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send('\x02') // Ctrl+B
-        if (key.sequence) ws.send(key.sequence)
+      flushPendingCtrlKey()
+      setStatus(`Press Ctrl+${key.name.toUpperCase()} again to ${key.name === 'c' ? 'detach' : 'kill'}`)
+      pendingCtrlKey.current = {
+        key: key.name,
+        sequence: key.sequence,
+        timeout: setTimeout(() => {
+          if (pendingCtrlKey.current?.key !== key.name) return
+          const sequence = pendingCtrlKey.current.sequence
+          pendingCtrlKey.current = null
+          setStatus(null)
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(sequence)
+          }
+        }, DOUBLE_CTRL_TIMEOUT_MS),
       }
       return
     }
 
-    // Ctrl+B → enter prefix mode
-    if (key.ctrl && key.name === 'b') {
-      prefixActive.current = true
-      return
-    }
+    flushPendingCtrlKey()
 
     // Forward all other input to the relay PTY
     if (ws.readyState === WebSocket.OPEN && key.sequence) {
@@ -198,20 +226,18 @@ function AttachView({ sessionName, ws, onDetach, onKill }: AttachViewProps) {
           {status && <text fg="#1a1a1a"> {status} </text>}
         </box>
         <box style={{ flexDirection: 'row' }}>
-          <Button label="Detach" shortcut="^B D" onPress={onDetach} />
-          <Button label="Kill" shortcut="^B X" onPress={onKill} />
+          <Button label="Detach" shortcut="^C ^C" onPress={onDetach} />
+          <Button label="Kill" shortcut="^X ^X" onPress={onKill} />
         </box>
       </box>
     </box>
   )
 }
 
-interface RunAttachTuiOptions {
+export async function runAttachTui({ sessionName, relayPort }: {
   sessionName: string
   relayPort: number
-}
-
-export async function runAttachTui({ sessionName, relayPort }: RunAttachTuiOptions): Promise<void> {
+}): Promise<void> {
   // Connect WebSocket to relay using native WebSocket (available in Bun)
   const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/attach`)
 
