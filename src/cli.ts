@@ -10,6 +10,7 @@ import { goke, GokeProcessExit, type GokeOptions } from 'goke'
 import { z } from 'zod'
 import dedent from 'string-dedent'
 import pc from 'picocolors'
+import { isAgent } from 'std-env'
 import { Session, type Key, isValidKey, VALID_KEYS } from './session.js'
 
 // Domain errors — errore tagged errors for typed error handling.
@@ -182,6 +183,7 @@ function createCliWithActions(
     .option('--rows <n>', z.number().default(36).describe('Terminal rows'))
     .option('--cwd <path>', 'Working directory')
     .option('--env <key=value>', z.array(z.string()).describe('Environment variable (repeatable)'))
+    .option('--attach', 'Attach after launching when not running inside an agent')
     .option('--no-wait', "Don't wait for initial data")
     .option('--timeout <ms>', z.number().default(5000).describe('Wait timeout in milliseconds'))
     .example('tuistory launch "claude" -s claude --cols 150 --rows 45')
@@ -197,6 +199,7 @@ function createCliWithActions(
       rows: number
       cwd?: string
       env?: string[]
+      attach?: boolean
       // `--no-wait` produces `noWait?: boolean` on the inferred type
       noWait?: boolean
       timeout: number
@@ -208,7 +211,10 @@ function createCliWithActions(
         return
       }
 
-      const env = parseEnvOptions(options.env)
+      const env = {
+        ...parseEnvOptions(options.env),
+        TUISTORY_SESSION: options.session,
+      }
 
       // Let the shell handle command parsing — supports pipes, env vars, subshells, etc.
       const isWindows = os.platform() === 'win32'
@@ -1681,6 +1687,12 @@ async function runCliClient() {
     return
   }
 
+  if (inspectCli.matchedCommandName === 'launch' && process.env.TUISTORY_SESSION) {
+    console.error(pc.yellow(`Refusing to launch a nested tuistory session inside "${process.env.TUISTORY_SESSION}".`))
+    console.error(pc.yellow('Run the command directly here, or launch it from a normal terminal.'))
+    process.exit(1)
+  }
+
   // Intercept `attach` after goke parses argv for us, so the client-side path
   // can reuse the command definition instead of manually scanning process.argv.
   if (inspectCli.matchedCommandName === 'attach') {
@@ -1722,6 +1734,20 @@ async function runCliClient() {
   }
   if (result.stderr) {
     console.error(pc.red(result.stderr))
+  }
+
+  if (
+    inspectCli.matchedCommandName === 'launch'
+    && inspectCli.options.attach
+    && result.exitCode === 0
+  ) {
+    if (isAgent) {
+      console.error(pc.dim('Skipping attach because tuistory is running inside an AI agent.'))
+      process.exit(0)
+    }
+
+    await runAttachCommand({ session: inspectCli.options.session ?? 'default' })
+    process.exit(0)
   }
 
   process.exit(result.exitCode)

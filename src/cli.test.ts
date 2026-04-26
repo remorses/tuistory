@@ -11,11 +11,11 @@ const CLI_PATH = new URL('./cli.ts', import.meta.url).pathname
 const TEST_PID_FILE = `/tmp/tuistory/relay-${process.env.TUISTORY_PORT}.pid`
 
 // Helper to run CLI command
-async function runCli(args: string[], options: { cwd?: string } = {}): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+async function runCli(args: string[], options: { cwd?: string; env?: Record<string, string> } = {}): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const proc = spawn(['bun', CLI_PATH, ...args], {
     stdout: 'pipe',
     stderr: 'pipe',
-    env: { ...process.env, TUISTORY_PORT: process.env.TUISTORY_PORT },
+    env: { ...process.env, ...options.env, TUISTORY_PORT: process.env.TUISTORY_PORT },
     cwd: options.cwd,
   })
 
@@ -86,6 +86,7 @@ describe('CLI help and version', () => {
     expect(stdout).toContain('--rows <n>')
     expect(stdout).toContain('--cwd <path>')
     expect(stdout).toContain('--env <key=value>')
+    expect(stdout).toContain('--attach')
     expect(stdout).toContain('--no-wait')
     expect(stdout).toContain('--timeout <ms>')
   })
@@ -270,6 +271,42 @@ describe('CLI error handling', () => {
 
     await runCli(['close', ...s])
   }, 15000)
+
+  test('launch refuses to nest inside an existing tuistory session', async () => {
+    const nested = await runCli(['launch', 'echo nope', '-s', 'nested-launch-test'], {
+      env: { TUISTORY_SESSION: 'outer-session' },
+    })
+
+    expect(nested.exitCode).toBe(1)
+    expect(nested.stderr).toContain('Refusing to launch a nested tuistory session inside "outer-session"')
+
+    const sessions = await runCli(['sessions'])
+    expect(sessions.stdout).not.toContain('nested-launch-test')
+  }, 10000)
+
+  test('launch marks child processes as running inside a tuistory session', async () => {
+    const s = session('session-env-test')
+    const launch = await runCli(['launch', 'printf "$TUISTORY_SESSION"', ...s])
+    expect(launch.exitCode).toBe(0)
+
+    const output = await runCli(['read', ...s, '--all', '--trim'])
+    expect(output.stdout).toBe('session-env-test')
+
+    await runCli(['close', ...s])
+  }, 10000)
+
+  test('launch --attach skips attaching inside an agent', async () => {
+    const s = session('agent-attach-test')
+    const launch = await runCli(['launch', 'echo agent attach', ...s, '--attach'], {
+      env: { AI_AGENT: 'opencode' },
+    })
+
+    expect(launch.exitCode).toBe(0)
+    expect(launch.stdout).toContain('Session "agent-attach-test" started')
+    expect(launch.stderr).toContain('Skipping attach because tuistory is running inside an AI agent.')
+
+    await runCli(['close', ...s])
+  }, 10000)
 })
 
 describe('CLI regex patterns', () => {

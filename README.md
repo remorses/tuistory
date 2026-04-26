@@ -118,6 +118,7 @@ tuistory wait <pattern>       # Wait for text (supports /regex/)
 tuistory wait-idle            # Wait for terminal to stabilize
 tuistory scroll <up|down>     # Scroll the terminal
 tuistory resize <cols> <rows> # Resize terminal
+tuistory attach               # Attach interactively to a session
 tuistory close                # Close a session
 tuistory sessions             # List active sessions
 ```
@@ -129,6 +130,7 @@ tuistory sessions             # List active sessions
 --cols <n>            # Terminal columns (default: 120)
 --rows <n>            # Terminal rows (default: 36)
 --env <key=value>     # Environment variable (repeatable)
+--attach              # For launch: attach after starting unless running in an agent
 --timeout <ms>        # Wait timeout in milliseconds
 --trim                # Trim whitespace from snapshot
 --json                # Output as JSON
@@ -226,6 +228,28 @@ tuistory -s dev close
 **How `wait-idle` and `wait` replace `sleep`:** Instead of sleeping for a fixed duration, `wait-idle` waits until the terminal stops receiving data (~60ms of silence), meaning the process finished its output burst. `wait` goes further and polls reactively until a specific pattern appears. Both react as fast as the terminal updates (~75ms), with no guessing. If the timeout expires, you get a clear error with the current screen content.
 
 **How `read` replaces `capture-pane`:** `snapshot` shows the current visible screen (like taking a photo of a monitor). `read` gives you the full output stream: everything the process printed since your last `read` call, with ANSI escape codes stripped. If a dev server logged 500 lines, `read` returns all 500 as clean text.
+
+### Package scripts that attach for humans
+
+Use `--attach` when you want a normal command, like `bun dev`, to open as an interactive tuistory session for humans while still being visible to agents later.
+
+```json
+{
+  "scripts": {
+    "dev": "tuistory launch \"bun dev\" -s dev --attach"
+  }
+}
+```
+
+When you run `bun run dev`, tuistory starts the `dev` session and immediately attaches your terminal to it. If an AI coding agent runs the same script, tuistory detects the agent with `std-env`, skips the interactive attach, and leaves the session running for inspection.
+
+```bash
+tuistory sessions
+tuistory read -s dev --all
+tuistory snapshot -s dev --trim
+```
+
+Nested sessions are refused. If `tuistory launch` is run from inside another tuistory session, it prints a warning instead of creating a confusing session inside a session.
 
 ## Library Usage (Playwright for terminals)
 
