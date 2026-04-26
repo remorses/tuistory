@@ -83,6 +83,7 @@ describe('CLI help and version', () => {
     expect(exitCode).toBe(0)
     expect(stdout).toContain('$ tuistory launch <command>')
     expect(stdout).toContain('--session <name>')
+    expect(stdout).toContain('defaults to command')
     expect(stdout).toContain('--cols <n>')
     expect(stdout).toContain('--rows <n>')
     expect(stdout).toContain('--cwd <path>')
@@ -153,6 +154,21 @@ describe('CLI basic workflow', () => {
       fs.rmSync(cwd, { recursive: true, force: true })
     }
   }, 15000)
+
+  test('launch uses the command as default session name', async () => {
+    const launch = await runCli(['launch', 'printf hello'])
+    expect(launch.exitCode).toBe(0)
+    expect(launch.stdout).toBe('Session "printf hello" started')
+
+    const sessions = await runCli(['sessions'])
+    expect(sessions.exitCode).toBe(0)
+    expect(sessions.stdout).toContain('printf hello')
+
+    const output = await runCli(['read', '-s', 'printf hello', '--all', '--trim'])
+    expect(output.stdout).toBe('hello')
+
+    await runCli(['close', '-s', 'printf hello'])
+  }, 10000)
 })
 
 describe('CLI concurrent sessions', () => {

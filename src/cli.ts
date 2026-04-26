@@ -132,6 +132,22 @@ function parseEnvOptions(env: string[] | undefined): Record<string, string> {
   return result
 }
 
+function getDefaultSessionName(command: string): string {
+  return command
+}
+
+function getLaunchCommandFromArgv(argv: string[]): string | null {
+  const launchIndex = argv.indexOf('launch')
+  if (launchIndex === -1) return null
+
+  for (const arg of argv.slice(launchIndex + 1)) {
+    if (arg === '--') return null
+    if (arg.startsWith('-')) continue
+    return arg
+  }
+  return null
+}
+
 function yamlKey(key: string): string {
   return `${ansi('36', key)}${ansi('90', ':')}`
 }
@@ -196,7 +212,7 @@ function createCliWithActions(
       the initial terminal state — many apps show first-run dialogs
       or login prompts you need to handle.
     `)
-    .option('-s, --session <name>', z.string().default('default').describe('Session name'))
+    .option('-s, --session <name>', 'Session name (defaults to command)')
     .option('--cols <n>', z.number().default(120).describe('Terminal columns'))
     .option('--rows <n>', z.number().default(36).describe('Terminal rows'))
     .option('--cwd <path>', 'Working directory')
@@ -212,7 +228,7 @@ function createCliWithActions(
       tuistory launch "claude" -s ai && tuistory -s ai snapshot --trim
     `)
     .action(async (command: string, options: {
-      session: string
+      session?: string
       cols: number
       rows: number
       cwd?: string
@@ -222,16 +238,18 @@ function createCliWithActions(
       noWait?: boolean
       timeout: number
     }, { process }) => {
+      const sessionName = options.session ?? getDefaultSessionName(command)
+
       // Check for duplicate session name
-      if (sessions.has(options.session)) {
-        ctx.stderr = `Session "${options.session}" already exists. Use a different name or close it first.`
+      if (sessions.has(sessionName)) {
+        ctx.stderr = `Session "${sessionName}" already exists. Use a different name or close it first.`
         ctx.exitCode = 1
         return
       }
 
       const env = {
         ...parseEnvOptions(options.env),
-        TUISTORY_SESSION: options.session,
+        TUISTORY_SESSION: sessionName,
       }
 
       // Let the shell handle command parsing — supports pipes, env vars, subshells, etc.
@@ -246,23 +264,23 @@ function createCliWithActions(
         label: command,
       }))
       if (session instanceof Error) {
-        ctx.stderr = new SessionCommandError({ operation: 'launch', session: options.session, reason: errorReason(session), cause: session }).message
+        ctx.stderr = new SessionCommandError({ operation: 'launch', session: sessionName, reason: errorReason(session), cause: session }).message
         ctx.exitCode = 1
         return
       }
 
-      sessions.set(options.session, session)
+      sessions.set(sessionName, session)
 
       // Log when PTY process exits so daemon operators can see what happened.
       // Don't auto-remove — the user may still want to read the last snapshot.
       session.onExit((info) => {
-        logger.log(`Session "${options.session}" PTY exited (code: ${info.exitCode}, signal: ${info.signal})`)
+        logger.log(`Session "${sessionName}" PTY exited (code: ${info.exitCode}, signal: ${info.signal})`)
       })
 
       if (!options.noWait) {
         const waited = await errore.tryAsync({
           try: () => session.waitForData({ timeout: options.timeout }),
-          catch: (e) => new SessionCommandError({ operation: 'launch', session: options.session, reason: errorReason(e), cause: e }),
+          catch: (e) => new SessionCommandError({ operation: 'launch', session: sessionName, reason: errorReason(e), cause: e }),
         })
         if (waited instanceof Error) {
           ctx.stderr = waited.message
@@ -271,8 +289,8 @@ function createCliWithActions(
         }
       }
 
-      ctx.stdout = `Session "${options.session}" started`
-      logger.log(`Session "${options.session}" started: ${command}`)
+      ctx.stdout = `Session "${sessionName}" started`
+      logger.log(`Session "${sessionName}" started: ${command}`)
     })
 
   cli
@@ -1774,7 +1792,8 @@ async function runCliClient() {
       process.exit(0)
     }
 
-    await runAttachCommand({ session: inspectCli.options.session ?? 'default' })
+    const command = getLaunchCommandFromArgv(process.argv)
+    await runAttachCommand({ session: inspectCli.options.session ?? (command ? getDefaultSessionName(command) : undefined) })
     process.exit(0)
   }
 
