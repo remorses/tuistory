@@ -148,6 +148,11 @@ function getLaunchCommandFromArgv(argv: string[]): string | null {
   return null
 }
 
+function shellQuote(value: string): string {
+  if (/^[a-zA-Z0-9_./:-]+$/.test(value)) return value
+  return `'${value.replaceAll(`'`, `'\\''`)}'`
+}
+
 function yamlKey(key: string): string {
   return `${ansi('36', key)}${ansi('90', ':')}`
 }
@@ -241,8 +246,15 @@ function createCliWithActions(
       const sessionName = options.session ?? getDefaultSessionName(command)
 
       // Check for duplicate session name
-      if (sessions.has(sessionName)) {
-        ctx.stderr = `Session "${sessionName}" already exists. Use a different name or close it first.`
+      const existingSession = sessions.get(sessionName)
+      if (existingSession) {
+        ctx.stderr = dedent`
+          Session "${sessionName}" already exists.
+          Existing session:
+            command: ${existingSession.currentCommand}
+            cwd: ${existingSession.currentCwd}
+            read: tuistory read -s ${shellQuote(sessionName)} --all
+        `
         ctx.exitCode = 1
         return
       }
@@ -1788,7 +1800,6 @@ async function runCliClient() {
     && result.exitCode === 0
   ) {
     if (isAgent) {
-      console.error(pc.dim('Skipping attach because tuistory is running inside an AI agent.'))
       process.exit(0)
     }
 

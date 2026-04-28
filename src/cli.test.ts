@@ -229,7 +229,7 @@ describe('CLI error handling', () => {
     // Try to create duplicate
     const launch2 = await runCli(['launch', 'bash --norc', '-s', 'dup-test'])
     expect(launch2.exitCode).toBe(1)
-    expect(launch2.stderr).toContain('already exists')
+    expect(launch2.stderr).toBe(`Session "dup-test" already exists.\nExisting session:\n  command: bash --norc\n  cwd: ${process.cwd()}\n  read: tuistory read -s dup-test --all`)
 
     // Clean up
     await runCli(['close', '-s', 'dup-test'])
@@ -324,7 +324,7 @@ describe('CLI error handling', () => {
 
     expect(launch.exitCode).toBe(0)
     expect(launch.stdout).toContain('Session "agent-attach-test" started')
-    expect(launch.stderr).toContain('Skipping attach because tuistory is running inside an AI agent.')
+    expect(launch.stderr).toBe('')
 
     await runCli(['close', ...s])
   }, 10000)
