@@ -105,6 +105,19 @@ interface CommandResult {
   exitCode: number
 }
 
+interface LaunchOptions {
+  '--': string[]
+  session?: string
+  cols: number
+  rows: number
+  cwd?: string
+  env?: string[]
+  attach?: boolean
+  // `--no-wait` produces `noWait?: boolean` on the inferred type
+  noWait?: boolean
+  timeout: number
+}
+
 // Parse pattern - auto-detect regex from /pattern/flags syntax
 function parsePattern(input: string): string | RegExp {
   const match = input.match(/^\/(.+)\/([gimsuy]*)$/)
@@ -138,9 +151,9 @@ function getDefaultSessionName(command: string): string {
 
 function getLaunchCommandFromArgv(argv: string[]): string | null {
   const launchIndex = argv.indexOf('launch')
-  if (launchIndex === -1) return null
+  const commandArgs = launchIndex === -1 ? argv.slice(2) : argv.slice(launchIndex + 1)
 
-  for (const arg of argv.slice(launchIndex + 1)) {
+  for (const arg of commandArgs) {
     if (arg === '--') return null
     if (arg.startsWith('-')) continue
     return arg
@@ -201,22 +214,23 @@ function createCliWithActions(
     return options.session
   }
 
-  cli
-    .command('launch <command>', dedent`
-      Launch a new terminal session with a PTY (pseudo-terminal).
+  const launchDescription = dedent`
+    Launch a new terminal session with a PTY (pseudo-terminal).
 
-      Spawns the given command in a virtual terminal with configurable
-      dimensions. The command string is parsed like a shell — spaces
-      separate arguments, quotes group them.
+    Spawns the given command in a virtual terminal with configurable
+    dimensions. The command string is parsed like a shell — spaces
+    separate arguments, quotes group them.
 
-      The session runs inside a background daemon so it persists
-      across multiple tuistory invocations. Use \`-s\` to name
-      sessions for easy reference.
+    The session runs inside a background daemon so it persists
+    across multiple tuistory invocations. Use \`-s\` to name
+    sessions for easy reference.
 
-      **Tip:** Always run \`snapshot --trim\` after launch to see
-      the initial terminal state — many apps show first-run dialogs
-      or login prompts you need to handle.
-    `)
+    **Tip:** Always run \`snapshot --trim\` after launch to see
+    the initial terminal state — many apps show first-run dialogs
+    or login prompts you need to handle.
+  `
+
+  const addLaunchOptions = (command: any) => command
     .option('-s, --session <name>', 'Session name (defaults to command)')
     .option('--cols <n>', z.number().default(120).describe('Terminal columns'))
     .option('--rows <n>', z.number().default(36).describe('Terminal rows'))
@@ -225,6 +239,82 @@ function createCliWithActions(
     .option('--attach', 'Attach after launching when not running inside an agent')
     .option('--no-wait', "Don't wait for initial data")
     .option('--timeout <ms>', z.number().default(5000).describe('Wait timeout in milliseconds'))
+
+  const launchAction = async ({ command, options, runtime }: {
+    command: string | null | undefined
+    options: LaunchOptions
+    runtime: { process: { cwd: string } }
+  }) => {
+    const launchCommand = command ?? (options['--'].length > 0 ? options['--'].join(' ') : null)
+    if (!launchCommand) {
+      ctx.stderr = 'Error: missing command. Pass one as `tuistory launch "cmd"` or `tuistory launch -- cmd`.'
+      ctx.exitCode = 1
+      return
+    }
+
+    const sessionName = options.session ?? getDefaultSessionName(launchCommand)
+
+    // Check for duplicate session name
+    const existingSession = sessions.get(sessionName)
+    if (existingSession) {
+      ctx.stderr = dedent`
+        Session "${sessionName}" already exists.
+        Existing session:
+          command: ${existingSession.currentCommand}
+          cwd: ${existingSession.currentCwd}
+          read: tuistory read -s ${shellQuote(sessionName)} --all
+      `
+      ctx.exitCode = 1
+      return
+    }
+
+    const env = {
+      ...parseEnvOptions(options.env),
+      TUISTORY_SESSION: sessionName,
+    }
+
+    // Let the shell handle command parsing — supports pipes, env vars, subshells, etc.
+    const isWindows = os.platform() === 'win32'
+    const session = errore.try(() => new Session({
+      command: isWindows ? 'cmd.exe' : 'sh',
+      args: isWindows ? ['/c', launchCommand] : ['-c', launchCommand],
+      cols: options.cols,
+      rows: options.rows,
+      cwd: options.cwd ?? runtime.process.cwd,
+      env,
+      label: launchCommand,
+    }))
+    if (session instanceof Error) {
+      ctx.stderr = new SessionCommandError({ operation: 'launch', session: sessionName, reason: errorReason(session), cause: session }).message
+      ctx.exitCode = 1
+      return
+    }
+
+    sessions.set(sessionName, session)
+
+    // Log when PTY process exits so daemon operators can see what happened.
+    // Don't auto-remove — the user may still want to read the last snapshot.
+    session.onExit((info) => {
+      void logger.log(`Session "${sessionName}" PTY exited (code: ${info.exitCode}, signal: ${info.signal})`)
+    })
+
+    if (!options.noWait) {
+      const waited = await errore.tryAsync({
+        try: () => session.waitForData({ timeout: options.timeout }),
+        catch: (e) => new SessionCommandError({ operation: 'launch', session: sessionName, reason: errorReason(e), cause: e }),
+      })
+      if (waited instanceof Error) {
+        ctx.stderr = waited.message
+        ctx.exitCode = 1
+        return
+      }
+    }
+
+    ctx.stdout = `Session "${sessionName}" started`
+    void logger.log(`Session "${sessionName}" started: ${launchCommand}`)
+  }
+
+  addLaunchOptions(cli.command('launch [command]', launchDescription))
     .example('tuistory launch "claude" -s claude --cols 150 --rows 45')
     .example('tuistory launch "node" -s repl --cols 120')
     .example('tuistory launch "bash --norc" -s sh --env PS1="$ " --env FOO=bar')
@@ -232,78 +322,7 @@ function createCliWithActions(
       # Launch and immediately check what the app shows:
       tuistory launch "claude" -s ai && tuistory -s ai snapshot --trim
     `)
-    .action(async (command: string, options: {
-      session?: string
-      cols: number
-      rows: number
-      cwd?: string
-      env?: string[]
-      attach?: boolean
-      // `--no-wait` produces `noWait?: boolean` on the inferred type
-      noWait?: boolean
-      timeout: number
-    }, { process }) => {
-      const sessionName = options.session ?? getDefaultSessionName(command)
-
-      // Check for duplicate session name
-      const existingSession = sessions.get(sessionName)
-      if (existingSession) {
-        ctx.stderr = dedent`
-          Session "${sessionName}" already exists.
-          Existing session:
-            command: ${existingSession.currentCommand}
-            cwd: ${existingSession.currentCwd}
-            read: tuistory read -s ${shellQuote(sessionName)} --all
-        `
-        ctx.exitCode = 1
-        return
-      }
-
-      const env = {
-        ...parseEnvOptions(options.env),
-        TUISTORY_SESSION: sessionName,
-      }
-
-      // Let the shell handle command parsing — supports pipes, env vars, subshells, etc.
-      const isWindows = os.platform() === 'win32'
-      const session = errore.try(() => new Session({
-        command: isWindows ? 'cmd.exe' : 'sh',
-        args: isWindows ? ['/c', command] : ['-c', command],
-        cols: options.cols,
-        rows: options.rows,
-        cwd: options.cwd ?? process.cwd,
-        env,
-        label: command,
-      }))
-      if (session instanceof Error) {
-        ctx.stderr = new SessionCommandError({ operation: 'launch', session: sessionName, reason: errorReason(session), cause: session }).message
-        ctx.exitCode = 1
-        return
-      }
-
-      sessions.set(sessionName, session)
-
-      // Log when PTY process exits so daemon operators can see what happened.
-      // Don't auto-remove — the user may still want to read the last snapshot.
-      session.onExit((info) => {
-        logger.log(`Session "${sessionName}" PTY exited (code: ${info.exitCode}, signal: ${info.signal})`)
-      })
-
-      if (!options.noWait) {
-        const waited = await errore.tryAsync({
-          try: () => session.waitForData({ timeout: options.timeout }),
-          catch: (e) => new SessionCommandError({ operation: 'launch', session: sessionName, reason: errorReason(e), cause: e }),
-        })
-        if (waited instanceof Error) {
-          ctx.stderr = waited.message
-          ctx.exitCode = 1
-          return
-        }
-      }
-
-      ctx.stdout = `Session "${sessionName}" started`
-      logger.log(`Session "${sessionName}" started: ${command}`)
-    })
+    .action((command, options, runtime) => launchAction({ command, options, runtime }))
 
   cli
     .command('snapshot', dedent`
@@ -1151,6 +1170,10 @@ function createCliWithActions(
       ctx.stdout = 'attach command must be run client-side, not through relay'
     })
 
+  addLaunchOptions(cli.command('<command>', launchDescription))
+    .hidden()
+    .action((command, options, runtime) => launchAction({ command, options, runtime }))
+
   // Global examples showing the full workflow pattern
   cli.example(dedent`
     # Full workflow: launch, interact, snapshot, close
@@ -1740,9 +1763,31 @@ async function runCliClient() {
     return
   }
 
-  if (inspectCli.matchedCommandName === 'launch' && process.env.TUISTORY_SESSION) {
-    console.error(pc.yellow(`Refusing to launch a nested tuistory session inside "${process.env.TUISTORY_SESSION}".`))
-    console.error(pc.yellow('Run the command directly here, or launch it from a normal terminal.'))
+  const passthroughCommand = Array.isArray(inspectCli.options['--']) && inspectCli.options['--'].length > 0
+    ? inspectCli.options['--'].join(' ')
+    : null
+  const launchCommand = typeof inspectCli.args[0] === 'string'
+    ? inspectCli.args[0]
+    : passthroughCommand ?? getLaunchCommandFromArgv(process.argv)
+  const isLaunchCommand = inspectCli.matchedCommandName === 'launch'
+    || (inspectCli.matchedCommandName === undefined && launchCommand !== null)
+
+  if (isLaunchCommand && process.env.TUISTORY_SESSION) {
+    const attemptedCommand = `tuistory ${process.argv.slice(2).map(shellQuote).join(' ')}`
+    console.error(pc.yellow(dedent`
+      Refusing to launch a nested tuistory session inside "${process.env.TUISTORY_SESSION}".
+
+      Attempted tuistory command:
+        ${attemptedCommand}
+
+      This would create a tuistory session from inside another tuistory session.
+      The command you launched is already running inside its own tuistory session.
+
+      Agent fix:
+        If you are trying to launch a package.json script or another script that starts
+        tuistory, run it normally without wrapping it in tuistory.
+        The script will start the tuistory session itself in the background.
+    `))
     process.exit(1)
   }
 
@@ -1795,7 +1840,7 @@ async function runCliClient() {
   }
 
   if (
-    inspectCli.matchedCommandName === 'launch'
+    isLaunchCommand
     && inspectCli.options.attach
     && result.exitCode === 0
   ) {
@@ -1803,8 +1848,7 @@ async function runCliClient() {
       process.exit(0)
     }
 
-    const command = getLaunchCommandFromArgv(process.argv)
-    await runAttachCommand({ session: inspectCli.options.session ?? (command ? getDefaultSessionName(command) : undefined) })
+    await runAttachCommand({ session: inspectCli.options.session ?? (launchCommand ? getDefaultSessionName(launchCommand) : undefined) })
     process.exit(0)
   }
 

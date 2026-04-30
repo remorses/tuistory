@@ -65,7 +65,7 @@ describe('CLI help and version', () => {
   test('--help shows all commands', async () => {
     const { stdout, exitCode } = await runCli(['--help'])
     expect(exitCode).toBe(0)
-    expect(stdout).toContain('launch <command>')
+    expect(stdout).toContain('launch [command]')
     expect(stdout).toContain('snapshot')
     expect(stdout).toContain('read')
     expect(stdout).toContain('screenshot')
@@ -81,7 +81,7 @@ describe('CLI help and version', () => {
   test('launch --help shows launch options', async () => {
     const { stdout, exitCode } = await runCli(['launch', '--help'])
     expect(exitCode).toBe(0)
-    expect(stdout).toContain('$ tuistory launch <command>')
+    expect(stdout).toContain('$ tuistory launch [command]')
     expect(stdout).toContain('--session <name>')
     expect(stdout).toContain('defaults to command')
     expect(stdout).toContain('--cols <n>')
@@ -168,6 +168,28 @@ describe('CLI basic workflow', () => {
     expect(output.stdout).toBe('hello')
 
     await runCli(['close', '-s', 'printf hello'])
+  }, 10000)
+
+  test('bare command aliases launch', async () => {
+    const launch = await runCli(['printf hello', '-s', 'default-launch'])
+    expect(launch.exitCode).toBe(0)
+    expect(launch.stdout).toBe('Session "default-launch" started')
+
+    const output = await runCli(['read', '-s', 'default-launch', '--all', '--trim'])
+    expect(output.stdout).toBe('hello')
+
+    await runCli(['close', '-s', 'default-launch'])
+  }, 10000)
+
+  test('launch accepts command after --', async () => {
+    const launch = await runCli(['launch', '-s', 'dash-launch', '--', 'printf', 'hello'])
+    expect(launch.exitCode).toBe(0)
+    expect(launch.stdout).toBe('Session "dash-launch" started')
+
+    const output = await runCli(['read', '-s', 'dash-launch', '--all', '--trim'])
+    expect(output.stdout).toBe('hello')
+
+    await runCli(['close', '-s', 'dash-launch'])
   }, 10000)
 })
 
@@ -300,6 +322,9 @@ describe('CLI error handling', () => {
 
     expect(nested.exitCode).toBe(1)
     expect(nested.stderr).toContain('Refusing to launch a nested tuistory session inside "outer-session"')
+    expect(nested.stderr).toContain("Attempted tuistory command:\n  tuistory launch 'echo nope' -s nested-launch-test")
+    expect(nested.stderr).toContain('The command you launched is already running inside its own tuistory session.')
+    expect(nested.stderr).toContain('The script will start the tuistory session itself in the background.')
 
     const sessions = await runCli(['sessions'])
     expect(sessions.stdout).not.toContain('nested-launch-test')
