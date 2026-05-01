@@ -46,7 +46,7 @@ npx -y skills add remorses/tuistory
 
 ```bash
 # Launch Claude Code
-tuistory launch "claude" -s claude --cols 150 --rows 45
+tuistory -s claude --cols 150 --rows 45 -- claude
 
 # Wait for it to load
 tuistory -s claude wait "Claude Code" --timeout 15000
@@ -72,7 +72,7 @@ tuistory -s claude close
 
 ```bash
 # Launch Node.js debugger (assuming app.js has a debugger statement)
-tuistory launch "node inspect app.js" -s debug --cols 120
+tuistory -s debug --cols 120 -- node inspect app.js
 
 # Wait for debugger to start and continue to breakpoint
 tuistory -s debug wait "Break on start"
@@ -107,7 +107,7 @@ tuistory -s debug close
 ### CLI Commands Reference
 
 ```bash
-tuistory launch <command>     # Start a terminal session
+tuistory -- <command>         # Start a terminal session
 tuistory snapshot             # Get current terminal screen as text
 tuistory read                 # Get new process output since last read
 tuistory screenshot           # Capture terminal as image (JPEG/PNG/WebP)
@@ -150,7 +150,7 @@ tuistory -s mysession snapshot --trim  # See what happened
 **Use `read` for log-heavy processes.** When a process outputs more than fits on screen, `snapshot` only shows the visible portion. Use `read` to get the full output stream:
 
 ```bash
-tuistory launch "npm test" -s test
+tuistory -s test -- npm test
 tuistory -s test wait "Tests:" --timeout 60000
 tuistory read -s test  # Get ALL test output, not just last screenful
 ```
@@ -158,7 +158,7 @@ tuistory read -s test  # Get ALL test output, not just last screenful
 **Use `wait-idle` when you don't know what to wait for.** If you just need the process to finish its initial burst of output before reading, `wait-idle` waits until the terminal stops receiving data:
 
 ```bash
-tuistory launch "npm test" -s test
+tuistory -s test -- npm test
 tuistory -s test wait-idle --timeout 10000  # Wait for output to stabilize
 tuistory read -s test                       # Read everything it printed
 ```
@@ -203,7 +203,7 @@ tmux kill-session -t dev
 
 ```bash
 # Start dev server
-tuistory launch "pnpm dev" -s dev
+tuistory -s dev -- pnpm dev
 
 # Option 1: Wait for output to stabilize (when you don't know what to expect)
 tuistory -s dev wait-idle --timeout 30000
@@ -236,7 +236,7 @@ Use `--attach` when you want a normal command, like `bun dev`, to open as an int
 ```json
 {
   "scripts": {
-    "dev": "tuistory launch \"bun dev\" -s dev --attach"
+    "dev": "tuistory -s dev --attach -- bun dev"
   }
 }
 ```
@@ -249,7 +249,7 @@ tuistory read -s dev --all
 tuistory snapshot -s dev --trim
 ```
 
-Nested sessions are refused. If `tuistory launch` is run from inside another tuistory session, it prints a warning instead of creating a confusing session inside a session.
+Nested sessions are refused. If `tuistory -- <command>` is run from inside another tuistory session, it prints a warning instead of creating a confusing session inside a session.
 
 ## Library Usage (Playwright for terminals)
 

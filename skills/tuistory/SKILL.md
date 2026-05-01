@@ -47,7 +47,7 @@ Use an **observe → act → observe** loop, like Playwright but for terminals.
 
 ```bash
 # start a server in the background
-tuistory launch "bun run dev" -s dev
+tuistory -s dev -- bun run dev
 
 # wait for actual output instead of sleep 5
 # use regex so this still matches Ready, READY, etc.
