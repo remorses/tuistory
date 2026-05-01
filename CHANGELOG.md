@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.4.0
+
+1. **New `--` syntax for launch** — pass commands after `--` for reliable argument handling, especially for commands with flags or spaces. This is now the recommended style for scripts and AI agents:
+
+   ```bash
+   # New preferred syntax
+   tuistory -s claude --cols 150 --rows 45 -- claude
+   tuistory -s dev -- pnpm dev
+   tuistory -s test -- npm test
+
+   # Old style still works
+   tuistory launch "pnpm dev" -s dev
+   ```
+
+   Using `--` avoids quoting issues and correctly handles commands whose arguments start with `-`.
+
+2. **Bare command syntax** — you can now omit `launch` entirely and pass the command directly:
+
+   ```bash
+   tuistory -s dev -- bun run dev
+   tuistory -s claude -- claude
+   ```
+
+   Both `tuistory launch -- cmd` and `tuistory -- cmd` now work identically.
+
+3. **Improved duplicate session error** — when a session with the same name already exists, the error now shows the existing session's command, working directory, and a ready-to-run `read` command to inspect it:
+
+   ```
+   Session "dev" already exists.
+   Existing session:
+     command: pnpm dev
+     cwd: /Users/me/myapp
+     read: tuistory read -s dev --all
+   ```
+
+4. **Better nested session guidance** — when `tuistory launch` is refused inside a running session, the error now shows the attempted command and actionable advice for AI agents:
+
+   ```
+   Refusing to launch a nested tuistory session inside "outer-session".
+
+   Attempted tuistory command:
+     tuistory launch 'echo nope' -s nested
+
+   The command you launched is already running inside its own tuistory session.
+   The script will start the tuistory session itself in the background.
+   ```
+
+5. **Silent `--attach` skip for AI agents** — when `--attach` is set and tuistory detects it is running inside an AI agent, the process now exits cleanly without printing a warning message to stderr.
+
 ## 0.3.0
 
 1. **New `launch --attach` mode for package scripts** — start a named tuistory session and immediately attach your terminal when a human runs the command, while AI agents skip the interactive attach and leave the session running for inspection:
