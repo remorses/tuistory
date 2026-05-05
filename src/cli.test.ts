@@ -191,6 +191,19 @@ describe('CLI basic workflow', () => {
 
     await runCli(['close', '-s', 'dash-launch'])
   }, 10000)
+
+  test('bare command alias accepts command after -- with launch options', async () => {
+    const launch = await runCli(['--attach', '-s', 'dash-default-launch', '--', 'printf', 'hello'], {
+      env: { AI_AGENT: 'opencode' },
+    })
+    expect(launch.exitCode).toBe(0)
+    expect(launch.stdout).toBe('Session "dash-default-launch" started')
+
+    const output = await runCli(['read', '-s', 'dash-default-launch', '--all', '--trim'])
+    expect(output.stdout).toBe('hello')
+
+    await runCli(['close', '-s', 'dash-default-launch'])
+  }, 10000)
 })
 
 describe('CLI concurrent sessions', () => {

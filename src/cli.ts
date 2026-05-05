@@ -1170,7 +1170,7 @@ function createCliWithActions(
       ctx.stdout = 'attach command must be run client-side, not through relay'
     })
 
-  addLaunchOptions(cli.command('<command>', launchDescription))
+  addLaunchOptions(cli.command('[command]', launchDescription))
     .hidden()
     .action((command, options, runtime) => launchAction({ command, options, runtime }))
 

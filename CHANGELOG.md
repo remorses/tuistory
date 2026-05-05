@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.1
+
+1. **Fixed bare command alias requiring a positional argument** — you can now pass all launch options before `--` without the parser complaining about a missing command:
+
+   ```bash
+   tuistory --attach -s my-session -- printf hello
+   ```
+
+   Previously this would fail because `<command>` was mandatory; now it's optional since the real command comes after `--`.
+
 ## 0.4.0
 
 1. **New `--` syntax for launch** — pass commands after `--` for reliable argument handling, especially for commands with flags or spaces. This is now the recommended style for scripts and AI agents:
