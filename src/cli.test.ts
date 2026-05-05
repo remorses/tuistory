@@ -702,6 +702,26 @@ describe('attach support', () => {
     await runCli(['close', ...s])
   })
 
+  test('launch can reuse a dead session name', async () => {
+    const s = session('relaunch-dead-session')
+    const first = await runCli(['launch', 'echo first', ...s])
+    expect(first.exitCode).toBe(0)
+
+    const waitDead = await runCli(['wait', 'first', ...s, '--timeout', '5000'])
+    expect(waitDead.exitCode).toBe(0)
+
+    await new Promise((r) => setTimeout(r, 200))
+
+    const second = await runCli(['launch', 'echo second', ...s])
+    expect(second.exitCode).toBe(0)
+    expect(second.stdout).toBe('Session "relaunch-dead-session" started')
+
+    const snapshot = await runCli(['snapshot', ...s, '--trim'])
+    expect(snapshot.stdout).toContain('second')
+
+    await runCli(['close', ...s])
+  })
+
   test('WebSocket /attach receives PTY data', async () => {
     const s = session('attach-ws-test')
     await runCli(['launch', 'echo "ws-test-output"', ...s])

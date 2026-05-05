@@ -254,9 +254,11 @@ function createCliWithActions(
 
     const sessionName = options.session ?? getDefaultSessionName(launchCommand)
 
-    // Check for duplicate session name
     const existingSession = sessions.get(sessionName)
-    if (existingSession) {
+    if (existingSession?.isDead) {
+      existingSession.close()
+      sessions.delete(sessionName)
+    } else if (existingSession) {
       ctx.stderr = dedent`
         Session "${sessionName}" already exists.
         Existing session:
