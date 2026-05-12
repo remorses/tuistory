@@ -186,6 +186,9 @@ export class Session {
   private dataResolvers: Array<() => void> = []
   private closed = false
   private showCursor: boolean
+  // Original env options passed at launch (not the full process.env merge).
+  // Stored so restart can faithfully recreate the session.
+  private sessionEnv: Record<string, string | undefined>
   // Multiple simultaneous subscribers for attach clients (and future grid view).
   // Each subscriber receives raw PTY data chunks independently.
   private dataSubscribers: Set<(data: string) => void> = new Set()
@@ -207,6 +210,7 @@ export class Session {
     this.showCursor = options.showCursor ?? false
     this.sessionCwd = options.cwd ?? process.cwd()
     this.sessionCommand = options.label ?? [options.command, ...(options.args ?? [])].join(' ')
+    this.sessionEnv = options.env ?? {}
 
     this.term = new PersistentTerminal({
       cols: this.cols,
@@ -310,6 +314,10 @@ export class Session {
     return this.sessionCommand
   }
 
+  get currentEnv(): Record<string, string | undefined> {
+    return this.sessionEnv
+  }
+
   /**
    * Subscribe to raw PTY data chunks. Returns an unsubscribe function.
    * Multiple subscribers are supported (for attach clients, future grid view).
@@ -336,6 +344,18 @@ export class Session {
       return
     }
     this.exitListeners.push(callback)
+  }
+
+  /** Wait for the PTY process to exit. Returns true if it exited, false on timeout. */
+  waitForExit(timeout: number = 5000): Promise<boolean> {
+    if (this.dead) return Promise.resolve(true)
+    return new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), timeout)
+      this.onExit(() => {
+        clearTimeout(timer)
+        resolve(true)
+      })
+    })
   }
 
   /**

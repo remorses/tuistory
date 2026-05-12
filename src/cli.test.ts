@@ -672,6 +672,94 @@ console.log(result);
   }, 60000)
 })
 
+describe('CLI restart command', () => {
+  test('restart relaunches with same command', async () => {
+    const s = session('restart-basic')
+
+    // Launch a bash session
+    const launch = await runCli(['launch', 'bash --norc --noprofile', ...s, '--env', 'PS1=$ '])
+    expect(launch.exitCode).toBe(0)
+
+    // Type something to prove this is the first instance
+    await runCli(['type', 'echo first-run', ...s])
+    await runCli(['press', 'enter', ...s])
+    await runCli(['wait', 'first-run', ...s, '--timeout', '5000'])
+
+    // Restart the session
+    const restart = await runCli(['restart', ...s])
+    expect(restart.exitCode).toBe(0)
+    expect(restart.stdout).toBe('Session "restart-basic" restarted')
+
+    // The old typed text should be gone (fresh terminal)
+    const snapshot = await runCli(['snapshot', ...s, '--trim'])
+    expect(snapshot.exitCode).toBe(0)
+    expect(snapshot.stdout).not.toContain('first-run')
+
+    // The session should still be alive and usable
+    await runCli(['type', 'echo second-run', ...s])
+    await runCli(['press', 'enter', ...s])
+    await runCli(['wait', 'second-run', ...s, '--timeout', '5000'])
+
+    const snapshot2 = await runCli(['snapshot', ...s, '--trim'])
+    expect(snapshot2.stdout).toContain('second-run')
+
+    await runCli(['close', ...s])
+  }, 20000)
+
+  test('restart preserves cwd', async () => {
+    const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tuistory-restart-cwd-')))
+    const s = session('restart-cwd')
+
+    try {
+      await runCli(['launch', 'bash --norc --noprofile', ...s, '--env', 'PS1=$ ', '--cwd', cwd])
+
+      // Restart
+      const restart = await runCli(['restart', ...s])
+      expect(restart.exitCode).toBe(0)
+
+      // Verify cwd is preserved
+      await runCli(['type', 'pwd', ...s])
+      await runCli(['press', 'enter', ...s])
+      await runCli(['wait', cwd, ...s, '--timeout', '5000'])
+
+      const snapshot = await runCli(['snapshot', ...s, '--trim'])
+      expect(snapshot.stdout).toContain(cwd)
+
+      await runCli(['close', ...s])
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true })
+    }
+  }, 20000)
+
+  test('restart of non-existent session fails', async () => {
+    const restart = await runCli(['restart', '-s', 'nonexistent-restart'])
+    expect(restart.exitCode).toBe(1)
+    expect(restart.stderr).toContain('not found')
+  })
+
+  test('restart of already-dead session works', async () => {
+    const s = session('restart-dead')
+
+    // Launch a short-lived command
+    await runCli(['launch', 'echo hello-dead', ...s])
+    await runCli(['wait', 'hello-dead', ...s, '--timeout', '5000'])
+
+    // Wait for process to exit
+    await new Promise((r) => setTimeout(r, 500))
+
+    // Restart should work even though the process is dead
+    const restart = await runCli(['restart', ...s])
+    expect(restart.exitCode).toBe(0)
+    expect(restart.stdout).toBe('Session "restart-dead" restarted')
+
+    // The relaunched session should run the same command
+    const output = await runCli(['read', ...s, '--all', '--trim'])
+    expect(output.stdout).toContain('hello-dead')
+
+    await runCli(['close', ...s])
+  }, 15000)
+})
+
 describe('attach support', () => {
   test('--help shows attach command', async () => {
     const { stdout, exitCode } = await runCli(['--help'])

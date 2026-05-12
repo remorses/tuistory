@@ -16,6 +16,7 @@ tuistory is a CLI and library to control and capture terminal applications and p
 - **Snapshot** the current terminal screen as text
 - **Screenshot** the terminal as JPEG/PNG/WebP images
 - **Click** on text patterns or coordinates (mouse events)
+- **Restart** sessions with the same command, cwd, and env (graceful SIGINT → SIGTERM escalation)
 
 ## Installation
 
@@ -119,6 +120,7 @@ tuistory wait-idle            # Wait for terminal to stabilize
 tuistory scroll <up|down>     # Scroll the terminal
 tuistory resize <cols> <rows> # Resize terminal
 tuistory attach               # Attach interactively to a session
+tuistory restart              # Restart a session (same command/cwd/env)
 tuistory close                # Close a session
 tuistory sessions             # List active sessions
 ```
@@ -220,7 +222,10 @@ tuistory read -s dev
 # Read entire buffered log (up to 1MB)
 tuistory read -s dev --all
 
-# Stop
+# Restart the dev server (graceful SIGINT, then relaunch)
+tuistory -s dev restart
+
+# Or manually stop and close
 tuistory -s dev press ctrl c
 tuistory -s dev close
 ```

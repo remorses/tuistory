@@ -58,6 +58,9 @@ tuistory read -s dev
 
 # later, read only the new output
 tuistory read -s dev
+
+# restart the server (sends Ctrl+C, waits, relaunches same command/cwd/env)
+tuistory -s dev restart
 ```
 
 Why this is better than `tmux`:

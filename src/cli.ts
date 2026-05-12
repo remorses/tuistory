@@ -1080,6 +1080,100 @@ function createCliWithActions(
     })
 
   cli
+    .command('restart', dedent`
+      Restart a session with the same command, cwd, and environment.
+
+      Sends SIGINT (Ctrl+C) to the running process and waits for it
+      to exit gracefully. If the process doesn't exit within the timeout,
+      escalates to SIGTERM. Then relaunches with the original command,
+      working directory, terminal dimensions, and environment variables.
+
+      If the session's process is already dead, skips the signal phase
+      and relaunches immediately.
+
+      Useful for bouncing dev servers, restarting crashed processes,
+      or refreshing a long-running tool without losing the session name.
+    `)
+    .option('-s, --session <name>', 'Session name (required)')
+    .option('--timeout <ms>', z.number().default(5000).describe('Timeout for graceful shutdown in milliseconds'))
+    .option('--no-wait', "Don't wait for initial data after restart")
+    .example('tuistory -s dev restart')
+    .example('tuistory -s dev restart --timeout 10000')
+    .action(async (options: {
+      session?: string
+      timeout: number
+      noWait?: boolean
+    }) => {
+      const sessionName = requireSession(options)
+      if (!sessionName) return
+
+      const session = getSession(sessionName)
+      if (!session) return
+
+      // Store original launch parameters before closing
+      const command = session.currentCommand
+      const cwd = session.currentCwd
+      const cols = session.currentCols
+      const rows = session.currentRows
+      const env = session.currentEnv
+
+      // Graceful shutdown: SIGINT first, then SIGTERM if needed
+      if (!session.isDead) {
+        // Write Ctrl+C to the PTY (SIGINT to foreground process group)
+        errore.try(() => session.writeRaw('\x03'))
+        const exited = await session.waitForExit(options.timeout)
+
+        if (!exited) {
+          // Escalate to SIGTERM
+          session.killProcess()
+          await session.waitForExit(2000)
+        }
+      }
+
+      // Clean up old session
+      errore.try(() => session.close())
+      sessions.delete(sessionName)
+
+      // Relaunch with same parameters
+      const isWindows = os.platform() === 'win32'
+      const newSession = errore.try(() => new Session({
+        command: isWindows ? 'cmd.exe' : 'sh',
+        args: isWindows ? ['/c', command] : ['-c', command],
+        cols,
+        rows,
+        cwd,
+        env: { ...env, TUISTORY_SESSION: sessionName },
+        label: command,
+      }))
+      if (newSession instanceof Error) {
+        ctx.stderr = new SessionCommandError({ operation: 'restart', session: sessionName, reason: errorReason(newSession), cause: newSession }).message
+        ctx.exitCode = 1
+        return
+      }
+
+      sessions.set(sessionName, newSession)
+
+      newSession.onExit((info) => {
+        void logger.log(`Session "${sessionName}" PTY exited (code: ${info.exitCode}, signal: ${info.signal})`)
+      })
+
+      if (!options.noWait) {
+        const waited = await errore.tryAsync({
+          try: () => newSession.waitForData({ timeout: 5000 }),
+          catch: (e) => new SessionCommandError({ operation: 'restart', session: sessionName, reason: errorReason(e), cause: e }),
+        })
+        if (waited instanceof Error) {
+          ctx.stderr = waited.message
+          ctx.exitCode = 1
+          return
+        }
+      }
+
+      ctx.stdout = `Session "${sessionName}" restarted`
+      void logger.log(`Session "${sessionName}" restarted: ${command}`)
+    })
+
+  cli
     .command('sessions', dedent`
       List all active sessions with their commands and working directories.
 
