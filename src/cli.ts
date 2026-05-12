@@ -1130,9 +1130,12 @@ function createCliWithActions(
         }
       }
 
-      // Clean up old session
+      // Clean up old session. Guard against concurrent restart: only delete
+      // if the map still points to the session we captured, not a newer one.
       errore.try(() => session.close())
-      sessions.delete(sessionName)
+      if (sessions.get(sessionName) === session) {
+        sessions.delete(sessionName)
+      }
 
       // Relaunch with same parameters
       const isWindows = os.platform() === 'win32'
@@ -1162,7 +1165,10 @@ function createCliWithActions(
           try: () => newSession.waitForData({ timeout: 5000 }),
           catch: (e) => new SessionCommandError({ operation: 'restart', session: sessionName, reason: errorReason(e), cause: e }),
         })
-        if (waited instanceof Error) {
+        // If waitForData timed out but the process is still alive, treat
+        // restart as successful. Silent processes (e.g. sleep) produce no
+        // initial output, so timing out is expected, not an error.
+        if (waited instanceof Error && newSession.isDead) {
           ctx.stderr = waited.message
           ctx.exitCode = 1
           return

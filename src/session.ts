@@ -350,11 +350,25 @@ export class Session {
   waitForExit(timeout: number = 5000): Promise<boolean> {
     if (this.dead) return Promise.resolve(true)
     return new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => resolve(false), timeout)
-      this.onExit(() => {
+      let settled = false
+
+      const listener = () => {
+        if (settled) return
+        settled = true
         clearTimeout(timer)
         resolve(true)
-      })
+      }
+
+      const timer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        // Remove the listener to prevent leaks when timeout fires first
+        const index = this.exitListeners.indexOf(listener)
+        if (index !== -1) this.exitListeners.splice(index, 1)
+        resolve(false)
+      }, timeout)
+
+      this.exitListeners.push(listener)
     })
   }
 
