@@ -1089,7 +1089,7 @@ function createCliWithActions(
     .action((options: { json?: boolean }) => {
       const entries = Array.from(sessions.entries())
       if (entries.length === 0) {
-        ctx.stdout = 'No active sessions'
+        ctx.stdout = options.json ? '[]' : 'No active sessions'
         return
       }
       if (options.json) {
