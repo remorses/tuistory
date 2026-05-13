@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0
+
+1. **New `restart` command** — gracefully stop and relaunch a session preserving its original command, working directory, terminal dimensions, and environment variables:
+
+   ```bash
+   # Restart a dev server
+   tuistory -s dev restart
+
+   # Custom timeout for slow shutdown (default 5s)
+   tuistory -s dev restart --timeout 10000
+   ```
+
+   The shutdown flow sends SIGINT (Ctrl+C) first, waits up to `--timeout` ms, then escalates to SIGTERM if the process ignores the signal. Already-dead sessions skip the signal phase and relaunch immediately.
+
+2. **Dead sessions no longer block new launches** — if a session with the same name already exited, `tuistory launch` now automatically cleans it up and reuses the name. Previously you had to manually close the dead session before launching again.
+
+3. **`sessions --json` returns `[]` for empty session lists** — the `--json` flag now works correctly when there are no active sessions, returning valid JSON instead of the human-readable "No active sessions" string. Thanks @shpoont for #3!
+
+4. **Bumped `kill-port-process` to 4.x** — removes the older vulnerable transitive dependency chain. Thanks @shpoont for #4!
+
 ## 0.4.1
 
 1. **Fixed bare command alias requiring a positional argument** — you can now pass all launch options before `--` without the parser complaining about a missing command:
