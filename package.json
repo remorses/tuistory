@@ -50,7 +50,7 @@
     "ghostty-opentui": "workspace:^",
     "goke": "^6.9.0",
     "hono": "^4.11.7",
-    "kill-port-process": "^3.2.1",
+    "kill-port-process": "^4.0.2",
     "picocolors": "^1.1.1",
     "react": "^19",
     "std-env": "^4.1.0",
