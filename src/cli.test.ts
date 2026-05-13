@@ -381,6 +381,11 @@ describe('CLI daemon control', () => {
     const sessions = await runCli(['sessions'])
     expect(sessions.exitCode).toBe(0)
     expect(sessions.stdout).toBe('No active sessions')
+
+    const jsonSessions = await runCli(['sessions', '--json'])
+    expect(jsonSessions.exitCode).toBe(0)
+    expect(jsonSessions.stdout).toBe('[]')
+    expect(JSON.parse(jsonSessions.stdout)).toEqual([])
   }, 10000)
 })
 
