@@ -127,6 +127,12 @@ function parsePattern(input: string): string | RegExp {
   return input
 }
 
+function testPattern(pattern: string | RegExp, value: string): boolean {
+  if (typeof pattern === 'string') return value.includes(pattern)
+  pattern.lastIndex = 0
+  return pattern.test(value)
+}
+
 // Parse env option (array of key=value strings)
 function parseEnvOptions(env: string[] | undefined): Record<string, string> {
   if (!env || !Array.isArray(env) || env.length === 0) {
@@ -829,12 +835,20 @@ function createCliWithActions(
       Supports regex patterns with /pattern/flags syntax.
       Plain strings are matched literally.
 
-      Returns "OK" when pattern is found, exits with error on timeout.
+      Returns output near the first matching line when the pattern is found,
+      exits with error on timeout. The returned context includes up to 10
+      lines before and after the match, so agents can extract URLs or prompts
+      without running a separate \`read\` command.
     `)
     .option('-s, --session <name>', 'Session name (required)')
     .option('--timeout <ms>', z.number().default(5000).describe('Timeout in milliseconds'))
     .example('tuistory -s claude wait "Ready"')
     .example('tuistory -s claude wait "/[0-9]+/" --timeout 30000')
+    .example(dedent`
+      # Start a browser login and print the URL/code once it appears:
+      tuistory launch "strada login" -s strada-login --no-wait
+      tuistory -s strada-login wait "/Your code:|https?:\\/\\//i" --timeout 15000
+    `)
     .example(dedent`
       # Wait for output then snapshot:
       tuistory -s sh wait "Done" --timeout 60000 && tuistory -s sh snapshot --trim
@@ -863,7 +877,16 @@ function createCliWithActions(
         ctx.exitCode = 1
         return
       }
-      ctx.stdout = 'OK'
+      const lines = session.readAll().split('\n')
+      const matchIndex = lines.findIndex((line) => testPattern(parsedPattern, line))
+      if (matchIndex === -1) {
+        ctx.stdout = result.trimEnd()
+        return
+      }
+
+      const start = Math.max(0, matchIndex - 10)
+      const end = Math.min(lines.length, matchIndex + 11)
+      ctx.stdout = lines.slice(start, end).join('\n').trimEnd()
     })
 
   cli

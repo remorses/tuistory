@@ -401,10 +401,31 @@ describe('CLI regex patterns', () => {
     // Wait with regex pattern
     const wait = await runCli(['wait', '/value: \\d+/', '-s', 'regex-test', '--timeout', '5000'])
     expect(wait.exitCode).toBe(0)
-    expect(wait.stdout).toBe('OK')
+    expect(wait.stdout).toContain('echo "value: 42"')
+    expect(wait.stdout).toContain('value: 42')
 
     // Clean up
     await runCli(['close', '-s', 'regex-test'])
+  }, 10000)
+
+  test('wait returns nearby output around the matching line', async () => {
+    const s = session('wait-context-test')
+    await runCli(['launch', 'bash --norc --noprofile', ...s, '--env', 'PS1=$ '])
+
+    await runCli(['type', 'for i in {1..25}; do echo "line $i"; done', ...s])
+    await runCli(['press', 'enter', ...s])
+
+    const wait = await runCli(['wait', 'line 15', ...s, '--timeout', '5000'])
+    expect(wait.exitCode).toBe(0)
+    expect(wait.stdout).toContain('line 5')
+    expect(wait.stdout).toContain('line 15')
+    expect(wait.stdout).toContain('line 25')
+    expect(wait.stdout).not.toContain('line 4')
+
+    const read = await runCli(['read', ...s])
+    expect(read.stdout).toContain('line 15')
+
+    await runCli(['close', ...s])
   }, 10000)
 })
 
