@@ -278,7 +278,7 @@ export class Session {
         resolvers.forEach((fn) => {
           fn()
         })
-      }, 60) // Wait 60ms after last data for content to stabilize
+      }, 200) // Wait 200ms after last data for content to stabilize
     })
 
     // When the PTY child process exits, mark session as dead and resolve all

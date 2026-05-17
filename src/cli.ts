@@ -533,7 +533,7 @@ function createCliWithActions(
           return
         }
         // Poll for new output until timeout — waitIdle resolves after each
-        // batch of PTY data settles (60ms debounce), so we check repeatedly
+        // batch of PTY data settles (200ms debounce), so we check repeatedly
         const startTime = Date.now()
         while (Date.now() - startTime < options.timeout) {
           const idle = await errore.tryAsync({
