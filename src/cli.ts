@@ -427,9 +427,16 @@ function createCliWithActions(
         return
       }
 
-      ctx.stdout = options.json
-        ? JSON.stringify({ text, session: sessionName })
-        : text
+      if (options.json) {
+        const result: Record<string, unknown> = { text, session: sessionName }
+        if (session.isDead) {
+          result.dead = true
+          if (session.exitInfo) result.exitCode = session.exitInfo.exitCode
+        }
+        ctx.stdout = JSON.stringify(result)
+      } else {
+        ctx.stdout = text
+      }
     })
 
   cli
@@ -489,8 +496,15 @@ function createCliWithActions(
       const session = getSession(sessionName)
       if (!session) return
 
+      // Suffix appended to output when session process has exited, so callers
+      // (especially AI agents) know the process is done without a separate check.
+      const exitSuffix = session.isDead && session.exitInfo
+        ? `\n[process exited with code ${session.exitInfo.exitCode}]`
+        : ''
+
       if (options.all) {
-        ctx.stdout = options.trim ? session.readAll().trimEnd() : session.readAll()
+        const text = options.trim ? session.readAll().trimEnd() : session.readAll()
+        ctx.stdout = text + exitSuffix
         return
       }
 
@@ -498,7 +512,13 @@ function createCliWithActions(
         // If there's already unread output, return it immediately
         if (session.hasUnreadOutput()) {
           const output = session.read()
-          ctx.stdout = options.trim ? output.trimEnd() : output
+          ctx.stdout = (options.trim ? output.trimEnd() : output) + exitSuffix
+          return
+        }
+        // If the process already exited and there's nothing unread, return
+        // immediately instead of waiting for output that will never arrive.
+        if (session.isDead) {
+          ctx.stdout = exitSuffix.trimStart()
           return
         }
         // Poll for new output until timeout — waitIdle resolves after each
@@ -511,7 +531,17 @@ function createCliWithActions(
           })
           if (session.hasUnreadOutput()) {
             const output = session.read()
-            ctx.stdout = options.trim ? output.trimEnd() : output
+            ctx.stdout = (options.trim ? output.trimEnd() : output) + exitSuffix
+            return
+          }
+          // Process may have exited while we were waiting
+          if (session.isDead) {
+            const output = session.read()
+            const text = options.trim ? output.trimEnd() : output
+            const suffix = session.exitInfo
+              ? `\n[process exited with code ${session.exitInfo.exitCode}]`
+              : ''
+            ctx.stdout = text + suffix
             return
           }
         }
@@ -522,7 +552,7 @@ function createCliWithActions(
       }
 
       const output = session.read()
-      ctx.stdout = options.trim ? output.trimEnd() : output
+      ctx.stdout = (options.trim ? output.trimEnd() : output) + exitSuffix
     })
 
   cli
@@ -1843,14 +1873,16 @@ async function runAttachCommand(options: { session?: string }) {
       return
     }
 
-    const alive = sessions.filter(s => !s.dead)
-    if (alive.length === 0) {
-      console.error(pc.red('No active sessions. Launch one first with: tuistory launch <command>'))
+    if (sessions.length === 0) {
+      console.error(pc.red('No sessions. Launch one first with: tuistory launch <command>'))
       process.exit(1)
       return
     }
 
-    if (alive.length === 1) {
+    // Prefer alive sessions for auto-select, but show all in picker
+    const alive = sessions.filter(s => !s.dead)
+
+    if (alive.length === 1 && sessions.length === 1) {
       sessionName = alive[0].name
       console.log(pc.dim(`Auto-selecting session: ${sessionName}`))
     } else {
@@ -1859,14 +1891,15 @@ async function runAttachCommand(options: { session?: string }) {
       const home = os.homedir()
       const selection = await clack.select({
         message: 'Select a session to attach',
-        options: alive.map((s) => {
+        options: sessions.map((s) => {
           const displayCwd = s.cwd.startsWith(home) ? '~' + s.cwd.slice(home.length) : s.cwd
           const truncatedCmd = s.command.length > maxCommandLen
             ? s.command.slice(0, maxCommandLen) + '…'
             : s.command
+          const deadLabel = s.dead ? pc.red(' (exited)') : ''
           return {
             value: s.name,
-            label: `${s.name} ${pc.dim(displayCwd)} ${pc.dim(truncatedCmd)}`,
+            label: `${s.name}${deadLabel} ${pc.dim(displayCwd)} ${pc.dim(truncatedCmd)}`,
           }
         }),
       })

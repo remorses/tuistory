@@ -75,6 +75,7 @@ function AttachView({ sessionName, ws, onDetach, onKill }: AttachViewProps) {
   const termRef = useRef<GhosttyTerminalRenderable>(null)
   const { width, height } = useTerminalDimensions()
   const [status, setStatus] = useState<string | null>(null)
+  const [processExited, setProcessExited] = useState(false)
 
   // Terminal fills everything except the 1-row status bar
   const termCols = Math.max(20, width)
@@ -98,7 +99,12 @@ function AttachView({ sessionName, ws, onDetach, onKill }: AttachViewProps) {
         try {
           const msg = JSON.parse(str)
           if (msg.type === 'exit') {
-            setStatus(`Process exited (code ${msg.exitCode})`)
+            const parts = [`Process exited (code ${msg.exitCode}`]
+            if (msg.signal) parts[0] += `, signal ${msg.signal}`
+            parts[0] += ')'
+            parts.push('— press any key to detach')
+            setStatus(parts.join(' '))
+            setProcessExited(true)
             return
           }
           if (msg.type === 'error') {
@@ -164,6 +170,12 @@ function AttachView({ sessionName, ws, onDetach, onKill }: AttachViewProps) {
   }, [clearPendingCtrlKey])
 
   useKeyboard((key) => {
+    // When process has exited, any keypress detaches
+    if (processExited) {
+      onDetach()
+      return
+    }
+
     if (key.ctrl && (key.name === 'c' || key.name === 'x') && key.sequence) {
       const pending = pendingCtrlKey.current
 
@@ -219,15 +231,20 @@ function AttachView({ sessionName, ws, onDetach, onKill }: AttachViewProps) {
         />
       </box>
 
-      {/* Status bar — orange background like neovim/tmux */}
-      <box style={{ height: 1, backgroundColor: '#d08050', flexDirection: 'row', justifyContent: 'space-between' }}>
+      {/* Status bar — orange when alive, red when process exited */}
+      <box style={{ height: 1, backgroundColor: processExited ? '#b03030' : '#d08050', flexDirection: 'row', justifyContent: 'space-between' }}>
         <box style={{ flexDirection: 'row' }}>
-          <text fg="#1a1a1a" attributes={TextAttributes.BOLD}> {sessionName} </text>
-          {status && <text fg="#1a1a1a"> {status} </text>}
+          <text fg={processExited ? '#ffffff' : '#1a1a1a'} attributes={TextAttributes.BOLD}> {sessionName} </text>
+          {status && <text fg={processExited ? '#ffcccc' : '#1a1a1a'}> {status} </text>}
         </box>
         <box style={{ flexDirection: 'row' }}>
-          <Button label="Detach" shortcut="^C ^C" onPress={onDetach} />
-          <Button label="Kill" shortcut="^X ^X" onPress={onKill} />
+          {processExited
+            ? <Button label="Detach" shortcut="any key" onPress={onDetach} />
+            : <>
+                <Button label="Detach" shortcut="^C ^C" onPress={onDetach} />
+                <Button label="Kill" shortcut="^X ^X" onPress={onKill} />
+              </>
+          }
         </box>
       </box>
     </box>

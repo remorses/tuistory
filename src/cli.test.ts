@@ -141,7 +141,7 @@ describe('CLI basic workflow', () => {
 
       const output = await runCli(['read', '-s', 'cwd-test', '--all', '--trim'])
       expect(output.exitCode).toBe(0)
-      expect(output.stdout).toBe(cwd)
+      expect(output.stdout).toContain(cwd)
 
       const sessions = await runCli(['sessions'])
       expect(sessions.exitCode).toBe(0)
@@ -164,7 +164,7 @@ describe('CLI basic workflow', () => {
     expect(sessions.stdout).toContain('tuistory-printf-hello')
 
     const output = await runCli(['read', '-s', 'tuistory-printf-hello', '--all', '--trim'])
-    expect(output.stdout).toBe('hello')
+    expect(output.stdout).toContain('hello')
 
     await runCli(['close', '-s', 'tuistory-printf-hello'])
   }, 10000)
@@ -175,7 +175,7 @@ describe('CLI basic workflow', () => {
     expect(launch.stdout).toBe('Session "default-launch" started')
 
     const output = await runCli(['read', '-s', 'default-launch', '--all', '--trim'])
-    expect(output.stdout).toBe('hello')
+    expect(output.stdout).toContain('hello')
 
     await runCli(['close', '-s', 'default-launch'])
   }, 10000)
@@ -186,7 +186,7 @@ describe('CLI basic workflow', () => {
     expect(launch.stdout).toBe('Session "dash-launch" started')
 
     const output = await runCli(['read', '-s', 'dash-launch', '--all', '--trim'])
-    expect(output.stdout).toBe('hello')
+    expect(output.stdout).toContain('hello')
 
     await runCli(['close', '-s', 'dash-launch'])
   }, 10000)
@@ -199,7 +199,7 @@ describe('CLI basic workflow', () => {
     expect(launch.stdout).toBe('Session "dash-default-launch" started')
 
     const output = await runCli(['read', '-s', 'dash-default-launch', '--all', '--trim'])
-    expect(output.stdout).toBe('hello')
+    expect(output.stdout).toContain('hello')
 
     await runCli(['close', '-s', 'dash-default-launch'])
   }, 10000)
@@ -350,7 +350,7 @@ describe('CLI error handling', () => {
     expect(launch.exitCode).toBe(0)
 
     const output = await runCli(['read', ...s, '--all', '--trim'])
-    expect(output.stdout).toBe('session-env-test')
+    expect(output.stdout).toContain('session-env-test')
 
     await runCli(['close', ...s])
   }, 10000)
@@ -366,9 +366,36 @@ describe('CLI error handling', () => {
     expect(launch.exitCode).toBe(0)
 
     const output = await runCli(['read', ...s, '--all', '--trim'])
-    expect(output.stdout).toBe('from-caller-shell')
+    expect(output.stdout).toContain('from-caller-shell')
 
     await runCli(['close', ...s])
+  }, 10000)
+
+  test('read shows exit info suffix when process has exited', async () => {
+    const s = session('exit-info-test')
+    const launch = await runCli(['launch', 'printf done', ...s])
+    expect(launch.exitCode).toBe(0)
+
+    // Wait for process to exit
+    await new Promise(r => setTimeout(r, 200))
+
+    const output = await runCli(['read', ...s, '--all', '--trim'])
+    expect(output.stdout).toContain('done')
+    expect(output.stdout).toContain('[process exited with code 0]')
+
+    // Non-zero exit code
+    const s2 = session('exit-info-test-2')
+    const launch2 = await runCli(['launch', 'bash -c "echo failing && exit 42"', ...s2])
+    expect(launch2.exitCode).toBe(0)
+
+    await new Promise(r => setTimeout(r, 200))
+
+    const output2 = await runCli(['read', ...s2, '--all', '--trim'])
+    expect(output2.stdout).toContain('failing')
+    expect(output2.stdout).toContain('[process exited with code 42]')
+
+    await runCli(['close', ...s])
+    await runCli(['close', ...s2])
   }, 10000)
 
   test('launch skips auto-attach inside an agent', async () => {
