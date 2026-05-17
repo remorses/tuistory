@@ -102,7 +102,6 @@ function AttachView({ sessionName, ws, onDetach, onKill }: AttachViewProps) {
             const parts = [`Process exited (code ${msg.exitCode}`]
             if (msg.signal) parts[0] += `, signal ${msg.signal}`
             parts[0] += ')'
-            parts.push('— press any key to detach')
             setStatus(parts.join(' '))
             setProcessExited(true)
             return
@@ -170,8 +169,8 @@ function AttachView({ sessionName, ws, onDetach, onKill }: AttachViewProps) {
   }, [clearPendingCtrlKey])
 
   useKeyboard((key) => {
-    // When process has exited, any keypress detaches
-    if (processExited) {
+    // When process has exited, single Ctrl+C detaches (no double-press needed)
+    if (processExited && key.ctrl && key.name === 'c') {
       onDetach()
       return
     }
@@ -239,7 +238,7 @@ function AttachView({ sessionName, ws, onDetach, onKill }: AttachViewProps) {
         </box>
         <box style={{ flexDirection: 'row' }}>
           {processExited
-            ? <Button label="Detach" shortcut="any key" onPress={onDetach} />
+            ? <Button label="Detach" shortcut="^C" onPress={onDetach} />
             : <>
                 <Button label="Detach" shortcut="^C ^C" onPress={onDetach} />
                 <Button label="Kill" shortcut="^X ^X" onPress={onKill} />
