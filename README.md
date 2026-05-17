@@ -331,17 +331,13 @@ tuistory log-path       # Print the daemon log file path
 
 ### Security model
 
-The relay daemon runs a real shell PTY that any connected client can type into. That makes it powerful, and we took care to make sure only your own terminal can talk to it.
+The daemon runs a real shell PTY, so only your own terminal should reach it. Three checks enforce that:
 
-**Local only.** The daemon binds to `127.0.0.1`. Other machines on your network, your office Wi-Fi, or the public internet can never reach it.
+- **Bound to `127.0.0.1`.** Nothing on your network or the internet can connect.
+- **Origin header rejected.** Browsers always set it, CLI tools never do — so a malicious website you visit cannot open the attach WebSocket or inject keystrokes into your sessions.
+- **Host header allow-listed.** Only `127.0.0.1`, `localhost`, and `[::1]` are accepted, which blocks DNS rebinding tricks.
 
-**Browser tabs are blocked.** A website you visit can technically send requests to `localhost`, and WebSocket connections from a page bypass the usual CORS protection. tuistory closes this gap by rejecting any request that carries an `Origin` header — which browsers always set and command-line tools never do. So a malicious site cannot open the attach WebSocket, cannot read your terminal output, and cannot inject keystrokes into your sessions.
-
-**DNS rebinding is blocked.** An attacker cannot point `evil.com` at `127.0.0.1` to sneak past the local-only bind: the daemon also checks the `Host` header and only answers when it is `127.0.0.1`, `localhost`, or `[::1]` on the relay port.
-
-**Defense in depth.** When a browser does send a request, modern browsers include a `Sec-Fetch-Site` header that page scripts cannot forge. The daemon honors it as an extra signal.
-
-Any request that fails these checks gets a `403` and is logged to `/tmp/tuistory/relay-server.log` so you can see if something tried. In practice, only the tuistory CLI itself (running on your machine, as your user) can reach the daemon.
+Anything else gets `403` and is logged to `/tmp/tuistory/relay-server.log`.
 
 ## Library Usage (Playwright for terminals)
 
