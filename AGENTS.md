@@ -18,7 +18,7 @@ TUISTORY_PORT=19951 bun src/cli.ts daemon-stop
 
 the next `bun src/cli.ts <command>` will spawn a fresh daemon with your updated code.
 
-the test suite already handles this automatically: `src/cli.test.ts` uses port `19951` (separate from the default `19977` so it never touches user sessions) and `killTestDaemon()` runs in `beforeAll` / `afterAll`. you do **not** need to manually stop daemons before running `bun test`; just remember to stop them before manual `bun src/cli.ts ...` invocations.
+the test suite already handles this automatically: `src/cli.test.ts` uses port `19951` (separate from the default `19977` so it never touches user sessions) and `killTestDaemon()` runs in `beforeAll` / `afterAll`. that function kills the recorded PID, also kills anything still bound to port `19951` (covers orphans whose PID file was lost), and waits for the port to be free before tests start. you do **not** need to manually stop daemons before running `bun test`; just remember to stop them before manual `bun src/cli.ts ...` invocations.
 
 ## always use bun, never tsx
 

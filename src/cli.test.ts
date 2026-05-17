@@ -26,34 +26,79 @@ async function runCli(args: string[], options: { cwd?: string; env?: Record<stri
   return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode }
 }
 
-// Kill the test daemon by PID (daemon-stop command was removed to protect user sessions).
-// Sends SIGTERM for graceful shutdown, escalates to SIGKILL if it doesn't exit within 2s.
+// Kill the test daemon so every test run starts a fresh one with the latest code.
+//
+// The relay daemon is a long-lived background process; if we leave a previous
+// daemon running it will keep the OLD compiled CLI loaded in memory, and the
+// test suite will silently exercise stale code (changes to middleware, route
+// handlers, session logic, etc. would all appear to be ignored).
+//
+// Strategy:
+//   1. Read the PID file and SIGTERM the recorded process. Escalate to SIGKILL
+//      after 2s if it hasn't exited.
+//   2. Also kill anything still bound to the test port, even if the PID file
+//      is missing or stale (e.g. orphaned daemon from a crashed prior run).
+//   3. Wait until the port is actually free before returning, otherwise the
+//      next CLI invocation could connect to the dying daemon.
 async function killTestDaemon() {
+  const port = Number(process.env.TUISTORY_PORT)
+
+  const waitForPidExit = async (pid: number) => {
+    const start = Date.now()
+    while (Date.now() - start < 2000) {
+      try {
+        process.kill(pid, 0)
+        await new Promise((r) => setTimeout(r, 100))
+      } catch {
+        return true
+      }
+    }
+    return false
+  }
+
+  // Step 1: PID file
   try {
     const pid = Number(fs.readFileSync(TEST_PID_FILE, 'utf-8').trim())
     if (!isNaN(pid) && pid > 0) {
-      process.kill(pid, 'SIGTERM')
-      const start = Date.now()
-      let exited = false
-      while (Date.now() - start < 2000) {
-        try { process.kill(pid, 0); await new Promise((r) => setTimeout(r, 100)) }
-        catch { exited = true; break }
-      }
+      try { process.kill(pid, 'SIGTERM') } catch {}
+      const exited = await waitForPidExit(pid)
       if (!exited) {
         try { process.kill(pid, 'SIGKILL') } catch {}
       }
     }
   } catch {}
   try { fs.unlinkSync(TEST_PID_FILE) } catch {}
+
+  // Step 2: kill anything still bound to the test port (covers orphaned
+  // daemons whose PID file was lost or never written).
+  try {
+    const { killPortProcess } = await import('kill-port-process')
+    await killPortProcess(port)
+  } catch {}
+
+  // Step 3: wait until the port is free. Tries a TCP connect; success means
+  // something is still listening and we should keep waiting.
+  const net = await import('node:net')
+  const isPortFree = (): Promise<boolean> => new Promise((resolve) => {
+    const sock = net.connect(port, '127.0.0.1')
+    sock.once('connect', () => { sock.destroy(); resolve(false) })
+    sock.once('error', () => { resolve(true) })
+    setTimeout(() => { sock.destroy(); resolve(true) }, 200)
+  })
+  const start = Date.now()
+  while (Date.now() - start < 3000) {
+    if (await isPortFree()) return
+    await new Promise((r) => setTimeout(r, 100))
+  }
 }
 
 // Helper to create session args for readability
 const session = (name: string) => ['-s', name] as const
 
-// Kill any existing test daemon before tests
+// Kill any existing test daemon before tests so we always exercise the latest
+// compiled CLI code. See killTestDaemon() for why this matters.
 beforeAll(async () => {
   await killTestDaemon()
-  await new Promise((r) => setTimeout(r, 500))
 })
 
 // Clean up test daemon after tests
