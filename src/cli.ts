@@ -525,10 +525,13 @@ function createCliWithActions(
         // batch of PTY data settles (60ms debounce), so we check repeatedly
         const startTime = Date.now()
         while (Date.now() - startTime < options.timeout) {
-          await errore.tryAsync({
+          const idle = await errore.tryAsync({
             try: () => session.waitIdle({ timeout: Math.min(500, options.timeout - (Date.now() - startTime)) }),
             catch: () => new Error('idle timeout'),
           })
+          if (idle instanceof Error) {
+            // Expected while polling: no new output arrived in this slice.
+          }
           if (session.hasUnreadOutput()) {
             const output = session.read()
             ctx.stdout = (options.trim ? output.trimEnd() : output) + exitSuffix
@@ -557,7 +560,7 @@ function createCliWithActions(
 
   cli
     .command('screenshot', dedent`
-      Capture the terminal screen as an image file (JPEG/PNG/WebP).
+      Capture the terminal screen as a PNG image file.
 
       Renders the current terminal buffer to a colored image with
       JetBrains Mono Nerd font on a fixed-width character grid.
@@ -592,14 +595,12 @@ function createCliWithActions(
     .option('--line-height <n>', z.number().default(1.5).describe('Line height multiplier'))
     .option('--background <color>', z.string().default('#1a1b26').describe('Background color'))
     .option('--foreground <color>', z.string().default('#c0caf5').describe('Text color'))
-    .option('--format <fmt>', z.enum(['jpeg', 'png', 'webp']).default('jpeg').describe('Image format'))
-    .option('--quality <n>', z.number().default(90).describe('Quality for lossy formats (0-100)'))
     .option('--pixel-ratio <n>', z.number().default(1).describe('Device pixel ratio for HiDPI rendering'))
     .option('--padding <cells>', z.number().min(0).default(DEFAULT_SCREENSHOT_PADDING_CELLS).describe('Frame padding in terminal cells (default: 2)'))
     .option('--frame-color <color>', z.string().describe('Color of the frame/padding area (default: auto-detect from terminal edge colors)'))
     .option('--immediate', "Don't wait for idle state")
-    .example('tuistory -s claude screenshot -o screenshot.jpg --pixel-ratio 2')
-    .example('tuistory -s claude screenshot --format png --font-size 20')
+    .example('tuistory -s claude screenshot -o screenshot.png --pixel-ratio 2')
+    .example('tuistory -s claude screenshot --font-size 20')
     .example('tuistory -s claude screenshot --background "#ffffff" --foreground "#24292e"')
     .example('tuistory -s claude screenshot --padding 2 --frame-color "#ff6600"')
     .action(async (options: {
@@ -610,8 +611,6 @@ function createCliWithActions(
       lineHeight: number
       background: string
       foreground: string
-      format: 'jpeg' | 'png' | 'webp'
-      quality: number
       pixelRatio: number
       padding: number
       frameColor?: string
@@ -649,8 +648,6 @@ function createCliWithActions(
             paddingX: paddingPx,
             paddingY: paddingPx,
             theme: { background: options.background, text: options.foreground },
-            format: options.format,
-            quality: options.quality,
             devicePixelRatio: options.pixelRatio,
             ...(options.frameColor ? { frameColor: options.frameColor } : {}),
           }
@@ -664,7 +661,7 @@ function createCliWithActions(
         return
       }
 
-      const outputPath = options.output ?? path.join(os.tmpdir(), `tuistory-screenshot-${Date.now()}.${options.format}`)
+      const outputPath = options.output ?? path.join(os.tmpdir(), `tuistory-screenshot-${Date.now()}.png`)
       const written = await errore.tryAsync({
         try: () => fs.writeFile(outputPath, image),
         catch: (e) => e,
@@ -1141,7 +1138,7 @@ function createCliWithActions(
       }
       sessions.delete(sessionName)
       ctx.stdout = `Session "${sessionName}" closed`
-      logger.log(`Session "${sessionName}" closed`)
+      void logger.log(`Session "${sessionName}" closed`)
     })
 
   cli
@@ -1185,7 +1182,8 @@ function createCliWithActions(
       // Graceful shutdown: SIGINT first, then SIGTERM if needed
       if (!session.isDead) {
         // Write Ctrl+C to the PTY (SIGINT to foreground process group)
-        errore.try(() => session.writeRaw('\x03'))
+        const interrupt = errore.try(() => session.writeRaw('\x03'))
+        if (interrupt instanceof Error) await logger.error(`Failed to interrupt session "${sessionName}": ${interrupt.message}`)
         const exited = await session.waitForExit(options.timeout)
 
         if (!exited) {
@@ -1197,7 +1195,8 @@ function createCliWithActions(
 
       // Clean up old session. Guard against concurrent restart: only delete
       // if the map still points to the session we captured, not a newer one.
-      errore.try(() => session.close())
+      const closed = errore.try(() => session.close())
+      if (closed instanceof Error) await logger.error(`Failed to close session "${sessionName}" before restart: ${closed.message}`)
       if (sessions.get(sessionName) === session) {
         sessions.delete(sessionName)
       }
@@ -1566,7 +1565,8 @@ async function startRelayServer() {
 
           // Resize PTY to match client terminal if dimensions provided
           if (parsed.cols && parsed.rows && !session.isDead) {
-            errore.try(() => session.resize({ cols: parsed!.cols!, rows: parsed!.rows! }))
+            const resized = errore.try(() => session.resize({ cols: parsed.cols!, rows: parsed.rows! }))
+            if (resized instanceof Error) void logger.error(`Failed to resize session "${sessionName}": ${resized.message}`)
           }
 
           // Send all buffered raw output so the client renders the full
@@ -1593,14 +1593,15 @@ async function startRelayServer() {
             ws.send(JSON.stringify({ type: 'exit', exitCode: session.exitInfo.exitCode, signal: session.exitInfo.signal }))
           }
 
-          logger.log(`Attach client connected to session "${sessionName}"`)
+          void logger.log(`Attach client connected to session "${sessionName}"`)
           return
         }
 
         if (parsed && parsed.type === 'resize' && sessionName) {
           const session = sessions.get(sessionName)
           if (session && parsed.cols && parsed.rows && !session.isDead) {
-            errore.try(() => session.resize({ cols: parsed!.cols!, rows: parsed!.rows! }))
+            const resized = errore.try(() => session.resize({ cols: parsed.cols!, rows: parsed.rows! }))
+            if (resized instanceof Error) void logger.error(`Failed to resize session "${sessionName}": ${resized.message}`)
           }
           return
         }
@@ -1609,7 +1610,7 @@ async function startRelayServer() {
           const session = sessions.get(sessionName)
           if (session) {
             session.killProcess()
-            logger.log(`Session "${sessionName}" killed by attach client`)
+            void logger.log(`Session "${sessionName}" killed by attach client`)
           }
           return
         }
@@ -1618,14 +1619,15 @@ async function startRelayServer() {
         if (sessionName) {
           const session = sessions.get(sessionName)
           if (session && !session.isDead) {
-            errore.try(() => session.writeRaw(raw))
+            const written = errore.try(() => session.writeRaw(raw))
+            if (written instanceof Error) void logger.error(`Failed to write to session "${sessionName}": ${written.message}`)
           }
         }
       },
       onClose() {
         if (unsubscribe) unsubscribe()
         if (sessionName) {
-          logger.log(`Attach client disconnected from session "${sessionName}"`)
+          void logger.log(`Attach client disconnected from session "${sessionName}"`)
         }
       },
       onError() {
@@ -1635,7 +1637,7 @@ async function startRelayServer() {
   }))
 
   app.post('/cli', async (c) => {
-    const { argv, cwd, env: callerEnv } = await c.req.json() as { argv: string[]; cwd?: string; env?: Record<string, string> }
+    const { argv, cwd, env: callerEnv } = await c.req.json()
 
     const ctx: CommandResult = { stdout: '', stderr: '', exitCode: 0 }
     const cli = createCliWithActions(ctx, sessions, logger, {
@@ -1685,21 +1687,23 @@ async function startRelayServer() {
   ensureTuistoryDir()
   const pidWrite = errore.try(() => fs.writeFileSync(PID_FILE, String(process.pid)))
   if (pidWrite instanceof Error) {
-    logger.error(`Failed to write PID file: ${pidWrite.message}`)
+    void logger.error(`Failed to write PID file: ${pidWrite.message}`)
   }
 
-  logger.log(`Relay server started on port ${RELAY_PORT}`)
-  logger.log(`Version: ${VERSION}`)
-  logger.log(`PID: ${process.pid}`)
+  await logger.log(`Relay server started on port ${RELAY_PORT}`)
+  await logger.log(`Version: ${VERSION}`)
+  await logger.log(`PID: ${process.pid}`)
 
   const gracefulShutdown = async (signal: string) => {
-    logger.log(`Relay server shutting down (${signal})`)
+    await logger.log(`Relay server shutting down (${signal})`)
     for (const [name, session] of sessions) {
-      errore.try(() => session.close())
-      logger.log(`Session "${name}" closed on shutdown`)
+      const closed = errore.try(() => session.close())
+      if (closed instanceof Error) await logger.error(`Failed to close session "${name}" on shutdown: ${closed.message}`)
+      await logger.log(`Session "${name}" closed on shutdown`)
     }
     sessions.clear()
-    errore.try(() => fs.unlinkSync(PID_FILE))
+    const unlinked = errore.try(() => fs.unlinkSync(PID_FILE))
+    if (unlinked instanceof Error) await logger.error(`Failed to remove PID file: ${unlinked.message}`)
     // Close the HTTP server first so no new requests are accepted,
     // then flush the logger, then exit.
     await new Promise<void>((resolve) => server.close(() => resolve()))
@@ -1708,16 +1712,16 @@ async function startRelayServer() {
     process.exit(0)
   }
 
-  process.on('SIGINT', () => { gracefulShutdown('SIGINT') })
-  process.on('SIGTERM', () => { gracefulShutdown('SIGTERM') })
+  process.on('SIGINT', () => { void gracefulShutdown('SIGINT') })
+  process.on('SIGTERM', () => { void gracefulShutdown('SIGTERM') })
 
   // Prevent unhandled errors from crashing the daemon and killing all sessions.
   // Log and continue — individual sessions may break but others survive.
   process.on('uncaughtException', (err) => {
-    logger.error(`Uncaught exception (daemon survived): ${err.stack || err.message}`)
+    void logger.error(`Uncaught exception (daemon survived): ${err.stack || err.message}`)
   })
   process.on('unhandledRejection', (reason) => {
-    logger.error(`Unhandled rejection (daemon survived): ${reason}`)
+    void logger.error(`Unhandled rejection (daemon survived): ${reason}`)
   })
 
   console.log(`tuistory relay server running on port ${RELAY_PORT}`)
@@ -2041,7 +2045,7 @@ const isRelayServer = process.env.TUISTORY_RELAY === '1'
 
 if (isRelayServer) {
   process.title = 'tuistory-relay'
-  startRelayServer()
+  void startRelayServer()
 } else {
-  runCliClient()
+  void runCliClient()
 }

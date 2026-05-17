@@ -666,7 +666,7 @@ console.log(result);
 
     try {
       // Launch node inspect (node debugger can be slow to connect, use generous timeouts)
-      const launch = await runCli(['launch', `node inspect ${scriptPath}`, ...s, '--cols', '100', '--rows', '30'])
+      const launch = await runCli(['launch', `node inspect --port=0 ${scriptPath}`, ...s, '--cols', '100', '--rows', '30'])
       expect(launch.exitCode).toBe(0)
 
       const waitStart = await runCli(['wait', 'Break on start', ...s, '--timeout', '15000'])

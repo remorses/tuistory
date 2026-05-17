@@ -515,18 +515,19 @@ test('screenshot renders to image', async () => {
   expect(data.lines.length).toBeGreaterThan(0)
 
   const { renderTerminalToImage } = await import('ghostty-opentui/image')
-  const image = await renderTerminalToImage(data, { format: 'jpeg' })
+  const image = await renderTerminalToImage(data)
 
-  // JPEG magic bytes: FF D8 FF
-  expect(image[0]).toBe(0xff)
-  expect(image[1]).toBe(0xd8)
-  expect(image[2]).toBe(0xff)
+  // PNG magic bytes
+  expect(image[0]).toBe(0x89)
+  expect(image[1]).toBe(0x50) // P
+  expect(image[2]).toBe(0x4e) // N
+  expect(image[3]).toBe(0x47) // G
   expect(image.length).toBeGreaterThan(500)
 
   // Save for visual inspection
   const fs = await import('fs')
   fs.mkdirSync('tmp', { recursive: true })
-  fs.writeFileSync('tmp/test-screenshot.jpg', image)
+  fs.writeFileSync('tmp/test-screenshot.png', image)
 
   session.close()
 }, 15000)

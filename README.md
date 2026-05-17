@@ -14,7 +14,7 @@ tuistory is a CLI and library to control and capture terminal applications and p
 - **Wait** for specific output with regex patterns and timeouts (replaces `sleep`)
 - **Read** new process output since last call (streaming log access)
 - **Snapshot** the current terminal screen as text
-- **Screenshot** the terminal as JPEG/PNG/WebP images
+- **Screenshot** the terminal as PNG images
 - **Click** on text patterns or coordinates (mouse events)
 - **Restart** sessions with the same command, cwd, and env (graceful SIGINT → SIGTERM escalation)
 
@@ -111,7 +111,7 @@ tuistory -s debug close
 tuistory -- <command>         # Start a terminal session
 tuistory snapshot             # Get current terminal screen as text
 tuistory read                 # Get new process output since last read
-tuistory screenshot           # Capture terminal as image (JPEG/PNG/WebP)
+tuistory screenshot           # Capture terminal as PNG image
 tuistory type <text>          # Type text character by character
 tuistory press <key> [keys]   # Press key(s): enter, ctrl c, alt f4
 tuistory click <pattern>      # Click on text matching pattern
