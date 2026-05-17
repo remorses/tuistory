@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.6.0
+
+1. **Auto-attach in TTY mode** — `tuistory launch` now automatically attaches to the session when running in an interactive terminal. Agents and non-TTY environments still get the session running in the background. The `--attach` flag is deprecated (kept as a hidden no-op for backwards compatibility).
+
+2. **Session reuse instead of duplicate errors** — launching with a name that already exists no longer fails. If the session is alive, tuistory reports it's already running and shows the command, cwd, and how to read its output. In TTY mode it attaches to the existing session:
+
+   ```bash
+   tuistory launch "pnpm dev" -s dev
+   # later...
+   tuistory launch "pnpm dev" -s dev
+   # → Session "dev" already running
+   ```
+
+3. **`wait` returns match context** — instead of printing just "OK", `wait` now returns ~20 lines around the first matching line (10 before, 10 after). Agents can extract URLs, codes, or prompts from the match context without running a separate `read`:
+
+   ```bash
+   tuistory -s login wait "/https?:\/\//i" --timeout 15000
+   # prints the lines surrounding the URL match
+   ```
+
+4. **Security: block browser-origin and DNS-rebinding requests** — the relay daemon now rejects any request with an `Origin` header (browsers always send it; legitimate CLI clients never do), mismatched `Host` headers (blocks DNS rebinding), and cross-site `Sec-Fetch-Site` values. This prevents a malicious webpage from sending commands to the local daemon.
+
+5. **Exit info in `read` output** — when a session's process has exited, `read` appends `[process exited with code N]` to the output. JSON mode includes `dead` and `exitCode` fields. Agents no longer need a separate check to know the process is done.
+
+6. **Better default session names** — session names now default to `<cwd-basename>-<command>` in kebab-case instead of using the raw command string. For example, launching `pnpm dev` from a folder called `my-app` creates session `my-app-pnpm-dev`.
+
+7. **Caller environment inheritance** — child processes now inherit the full environment from the caller's shell (including `PATH` with `node_modules/.bin` entries injected by pnpm/bun). Explicit `--env` flags still override inherited values.
+
+8. **Improved attach UX** — the status bar turns red when the process exits, showing exit code and signal. Single Ctrl+C detaches from a dead process (no double-press needed). The session picker now shows dead sessions marked with `(exited)`, cwd, and truncated command.
+
+9. **Stale session eviction** — dead sessions older than 24 hours are automatically cleaned up on the next `launch`, preventing unbounded memory growth in long-running daemons.
+
+10. **Screenshots are now PNG only** — removed `--format` and `--quality` options. Screenshots always output PNG, which is lossless and what most tools expect.
+
 ## 0.5.0
 
 1. **New `restart` command** — gracefully stop and relaunch a session preserving its original command, working directory, terminal dimensions, and environment variables:

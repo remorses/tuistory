@@ -202,6 +202,8 @@ export class Session {
   /** Exit info from the PTY process, null if still running. */
   private dead = false
   exitInfo: { exitCode: number; signal: number } | null = null
+  /** Timestamp (ms) when the PTY process exited, used for stale session eviction. */
+  exitedAt: number | null = null
   private exitListeners: Array<(info: { exitCode: number; signal: number }) => void> = []
 
   constructor(options: LaunchOptions) {
@@ -286,6 +288,7 @@ export class Session {
       if (this.closed) return
       this.dead = true
       this.exitInfo = info
+      this.exitedAt = Date.now()
       this.drainResolvers()
       // Notify external listeners (e.g. the daemon for logging/cleanup)
       const listeners = this.exitListeners.splice(0)
