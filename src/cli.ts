@@ -252,6 +252,7 @@ function createCliWithActions(
     .option('--rows <n>', z.number().default(36).describe('Terminal rows'))
     .option('--cwd <path>', 'Working directory')
     .option('--env <key=value>', z.array(z.string()).describe('Environment variable (repeatable)'))
+    .option('--attach', z.boolean().optional().meta({ deprecated: true, description: 'Deprecated: attach is now automatic in TTY mode' }))
     .option('--no-wait', "Don't wait for initial data")
     .option('--timeout <ms>', z.number().default(5000).describe('Wait timeout in milliseconds'))
 
