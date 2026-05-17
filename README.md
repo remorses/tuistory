@@ -331,12 +331,17 @@ tuistory log-path       # Print the daemon log file path
 
 ### Security model
 
-The relay daemon binds to `127.0.0.1` only, so other machines on the LAN cannot reach it. But a browser tab on the same machine can still open a connection to localhost, and **WebSockets are not subject to CORS once the handshake completes**. To stop a malicious website from piping shell commands into your PTY sessions, the daemon enforces two rules on every request (HTTP and WebSocket upgrades alike):
+The relay daemon runs a real shell PTY that any connected client can type into. That makes it powerful, and we took care to make sure only your own terminal can talk to it.
 
-- The request must not include an `Origin` header. Node and Bun `fetch`/`WebSocket` clients (the tuistory CLI itself) never send one; browsers always do.
-- The `Host` header must match `127.0.0.1:<port>`, `localhost:<port>`, or `[::1]:<port>`. This blocks DNS rebinding attacks where a public domain temporarily resolves to `127.0.0.1`.
+**Local only.** The daemon binds to `127.0.0.1`. Other machines on your network, your office Wi-Fi, or the public internet can never reach it.
 
-Requests that fail either check are answered with `403 forbidden` and logged to `~/.tuistory/relay-server.log` (or `/tmp/tuistory/relay-server.log`). Do **not** "fix" this by adding permissive CORS headers; the daemon executes arbitrary shell input, so cross-origin access is RCE.
+**Browser tabs are blocked.** A website you visit can technically send requests to `localhost`, and WebSocket connections from a page bypass the usual CORS protection. tuistory closes this gap by rejecting any request that carries an `Origin` header — which browsers always set and command-line tools never do. So a malicious site cannot open the attach WebSocket, cannot read your terminal output, and cannot inject keystrokes into your sessions.
+
+**DNS rebinding is blocked.** An attacker cannot point `evil.com` at `127.0.0.1` to sneak past the local-only bind: the daemon also checks the `Host` header and only answers when it is `127.0.0.1`, `localhost`, or `[::1]` on the relay port.
+
+**Defense in depth.** When a browser does send a request, modern browsers include a `Sec-Fetch-Site` header that page scripts cannot forge. The daemon honors it as an extra signal.
+
+Any request that fails these checks gets a `403` and is logged to `/tmp/tuistory/relay-server.log` so you can see if something tried. In practice, only the tuistory CLI itself (running on your machine, as your user) can reach the daemon.
 
 ## Library Usage (Playwright for terminals)
 
