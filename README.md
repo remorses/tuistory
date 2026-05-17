@@ -10,25 +10,33 @@
 **tmux for AI agents.** tuistory wraps any terminal command in a named background session. Agents can read logs, wait for specific output, take screenshots, and type into the process. Humans can attach to the same session at any time to see exactly what the agent sees, interact with the process, then detach and let the agent continue. Both share the same terminal state.
 
 ```
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ package.json: "dev": "tuistory -- next dev"                                            │
-│                                                                                        │
-│ Human runs `pnpm dev`             Agent runs `pnpm dev`                                │
-│       │                                 │                                              │
-│       ▼                                 ▼                                              │
-│ ┌────────────────┐             ┌─────────────────────────────────────┐                 │
-│ │ Auto-attaches  │             │ Session starts in background        │                 │
-│ │ to the terminal│             │                                     │                 │
-│ │ (like running  │             │ If already running:                 │                 │
-│ │  next dev      │             │   "next dev already running.        │                 │
-│ │  directly)     │             │    read with: tuistory read -s …"   │                 │
-│ └────────────────┘             │                                     │                 │
-│                                │ Agent can then:                     │                 │
-│                                │   tuistory read -s myapp-next-dev   │                 │
-│                                │   tuistory -s … wait "ready"        │                 │
-│                                │   tuistory -s … snapshot --trim     │                 │
-│                                └─────────────────────────────────────┘                 │
-└────────────────────────────────────────────────────────────────────────────────────────┘
+                       package.json: "dev": "tuistory -- next dev"
+
+  Human runs `pnpm dev`                        Agent runs `pnpm dev`
+        │                                            │
+        ▼                                            ▼
+  ┌──────────────────┐                   ┌─────────────────────────────┐
+  │ Auto-attaches    │                   │ Runs in background          │
+  │ to the terminal  │                   │                             │
+  │ (like running    │                   │ tuistory read -s …          │
+  │  next dev        │                   │ tuistory -s … wait "ready"  │
+  │  directly)       │                   │ tuistory -s … snapshot      │
+  └──────────────────┘                   └─────────────────────────────┘
+                                                     │
+                    Human runs                       │
+                    `tuistory attach`                │
+                          │                          │
+                          ▼                          ▼
+                   ┌────────────────────────────────────────┐
+                   │  Same background session               │
+                   │                                        │
+                   │  Human sees live terminal output       │
+                   │  Agent reads logs, waits, types        │
+                   │  Both share the same terminal state    │
+                   │                                        │
+                   │  Ctrl+C twice ► detach                 │
+                   │  Ctrl+X twice ► kill process           │
+                   └────────────────────────────────────────┘
 ```
 
 ## Add tuistory to your dev script
@@ -57,33 +65,33 @@ That's it. This one change gives you three things:
 
 ```bash
 # Read recent output (like checking server logs)
-tuistory read -s myapp-next-dev
+tuistory read -s x
 
 # Read the entire output buffer
-tuistory read -s myapp-next-dev --all
+tuistory read -s x --all
 
 # Wait for the server to be ready (replaces sleep)
-tuistory -s myapp-next-dev wait "ready on" --timeout 30000
+tuistory -s x wait "ready on" --timeout 30000
 
 # Wait for output to stabilize (when you don't know what to expect)
-tuistory -s myapp-next-dev wait-idle --timeout 10000
+tuistory -s x wait-idle --timeout 10000
 
 # See the current terminal screen
-tuistory -s myapp-next-dev snapshot --trim
+tuistory -s x snapshot --trim
 
 # Capture terminal as a PNG image
-tuistory -s myapp-next-dev screenshot
+tuistory -s x screenshot
 
 # Restart the dev server after code changes
-tuistory -s myapp-next-dev restart
+tuistory -s x restart
 
 # Type into the process (for REPLs, debuggers, interactive CLIs)
-tuistory -s myapp-next-dev type "rs"
-tuistory -s myapp-next-dev press enter
+tuistory -s x type "rs"
+tuistory -s x press enter
 
 # Stop the server
-tuistory -s myapp-next-dev press ctrl c
-tuistory -s myapp-next-dev close
+tuistory -s x press ctrl c
+tuistory -s x close
 ```
 
 ### Reuse and idempotency
@@ -98,7 +106,7 @@ Use `tuistory attach` to connect your terminal to any running session. This work
 
 ```bash
 # Attach to a specific session
-tuistory attach -s myapp-next-dev
+tuistory attach -s x
 
 # Pick from a list of running sessions
 tuistory attach
@@ -230,10 +238,10 @@ tmux kill-session -t dev
 
 ```bash
 tuistory -- pnpm dev
-tuistory -s myapp-pnpm-dev wait "ready on" --timeout 30000
-tuistory read -s myapp-pnpm-dev
-tuistory -s myapp-pnpm-dev press ctrl c
-tuistory -s myapp-pnpm-dev close
+tuistory -s x wait "ready on" --timeout 30000
+tuistory read -s x
+tuistory -s x press ctrl c
+tuistory -s x close
 ```
 
 `wait` reacts as fast as the terminal updates (~75ms). `read` returns the full output stream, not just the visible screen.
@@ -267,16 +275,16 @@ tuistory -s mysession snapshot --trim
 
 ```bash
 tuistory -- npm test
-tuistory -s myapp-npm-test wait "Tests:" --timeout 60000
-tuistory read -s myapp-npm-test
+tuistory -s x wait "Tests:" --timeout 60000
+tuistory read -s x
 ```
 
 **Use `wait-idle` when you don't know what to wait for.** It waits until the terminal stops receiving data (~60ms of silence):
 
 ```bash
 tuistory -- npm test
-tuistory -s myapp-npm-test wait-idle --timeout 10000
-tuistory read -s myapp-npm-test
+tuistory -s x wait-idle --timeout 10000
+tuistory read -s x
 ```
 
 **Use `wait` for async operations.** Don't assume commands complete instantly:

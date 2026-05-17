@@ -34,10 +34,10 @@ When a project has `"dev": "tuistory -- next dev"` in package.json, running `pnp
 ```
 Session "myapp-next-dev" already running
   with command: `next dev`
-  read output with: `tuistory read -s myapp-next-dev --all`
+  read output with: `tuistory read -s x --all`
 ```
 
-Agents can then use `tuistory read -s myapp-next-dev`, `tuistory -s myapp-next-dev wait "ready"`, etc. to inspect the running process.
+Agents can then use `tuistory read -s x`, `tuistory -s x wait "ready"`, etc. to inspect the running process.
 
 ## Key rules
 
@@ -63,16 +63,16 @@ tuistory -- bun run dev
 
 # wait for actual output instead of sleep 5
 # use regex so this still matches Ready, READY, etc.
-tuistory -s myapp-bun-run-dev wait "/ready/i" --timeout 30000
+tuistory -s x wait "/ready/i" --timeout 30000
 
 # read everything the process printed
-tuistory read -s myapp-bun-run-dev
+tuistory read -s x
 
 # later, read only the new output
-tuistory read -s myapp-bun-run-dev
+tuistory read -s x
 
 # restart the server (sends Ctrl+C, waits, relaunches same command/cwd/env)
-tuistory -s myapp-bun-run-dev restart
+tuistory -s x restart
 ```
 
 Why this is better than `tmux`:
