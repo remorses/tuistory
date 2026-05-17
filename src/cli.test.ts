@@ -88,7 +88,6 @@ describe('CLI help and version', () => {
     expect(stdout).toContain('--rows <n>')
     expect(stdout).toContain('--cwd <path>')
     expect(stdout).toContain('--env <key=value>')
-    expect(stdout).toContain('--attach')
     expect(stdout).toContain('--no-wait')
     expect(stdout).toContain('--timeout <ms>')
   })
@@ -155,19 +154,19 @@ describe('CLI basic workflow', () => {
     }
   }, 15000)
 
-  test('launch uses the command as default session name', async () => {
+  test('launch uses cwd basename + command as default session name', async () => {
     const launch = await runCli(['launch', 'printf hello'])
     expect(launch.exitCode).toBe(0)
-    expect(launch.stdout).toBe('Session "printf hello" started')
+    expect(launch.stdout).toBe('Session "tuistory-printf-hello" started')
 
     const sessions = await runCli(['sessions'])
     expect(sessions.exitCode).toBe(0)
-    expect(sessions.stdout).toContain('printf hello')
+    expect(sessions.stdout).toContain('tuistory-printf-hello')
 
-    const output = await runCli(['read', '-s', 'printf hello', '--all', '--trim'])
+    const output = await runCli(['read', '-s', 'tuistory-printf-hello', '--all', '--trim'])
     expect(output.stdout).toBe('hello')
 
-    await runCli(['close', '-s', 'printf hello'])
+    await runCli(['close', '-s', 'tuistory-printf-hello'])
   }, 10000)
 
   test('bare command aliases launch', async () => {
@@ -193,7 +192,7 @@ describe('CLI basic workflow', () => {
   }, 10000)
 
   test('bare command alias accepts command after -- with launch options', async () => {
-    const launch = await runCli(['--attach', '-s', 'dash-default-launch', '--', 'printf', 'hello'], {
+    const launch = await runCli(['-s', 'dash-default-launch', '--', 'printf', 'hello'], {
       env: { AI_AGENT: 'opencode' },
     })
     expect(launch.exitCode).toBe(0)
@@ -256,15 +255,17 @@ describe('CLI concurrent sessions', () => {
 })
 
 describe('CLI error handling', () => {
-  test('duplicate session name fails', async () => {
+  test('duplicate session name reuses existing session', async () => {
     // Create first session
     const launch1 = await runCli(['launch', 'bash --norc', '-s', 'dup-test'])
     expect(launch1.exitCode).toBe(0)
 
-    // Try to create duplicate
+    // Launching again with same name succeeds and reports already running
     const launch2 = await runCli(['launch', 'bash --norc', '-s', 'dup-test'])
-    expect(launch2.exitCode).toBe(1)
-    expect(launch2.stderr).toBe(`Session "dup-test" already exists.\nExisting session:\n  command: bash --norc\n  cwd: ${process.cwd()}\n  read: tuistory read -s dup-test --all`)
+    expect(launch2.exitCode).toBe(0)
+    expect(launch2.stdout).toContain('Session "dup-test" already running')
+    expect(launch2.stdout).toContain('`bash --norc`')
+    expect(launch2.stdout).toContain('`tuistory read -s dup-test --all`')
 
     // Clean up
     await runCli(['close', '-s', 'dup-test'])
@@ -354,9 +355,9 @@ describe('CLI error handling', () => {
     await runCli(['close', ...s])
   }, 10000)
 
-  test('launch --attach skips attaching inside an agent', async () => {
+  test('launch skips auto-attach inside an agent', async () => {
     const s = session('agent-attach-test')
-    const launch = await runCli(['launch', 'echo agent attach', ...s, '--attach'], {
+    const launch = await runCli(['launch', 'echo agent attach', ...s], {
       env: { AI_AGENT: 'opencode' },
     })
 

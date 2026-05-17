@@ -46,8 +46,8 @@ npx -y skills add remorses/tuistory
 ### Quick Start
 
 ```bash
-# Launch Claude Code
-tuistory -s claude --cols 150 --rows 45 -- claude
+# Launch Claude Code (auto-attaches in TTY, runs in background for agents)
+tuistory -- claude -s claude --cols 150 --rows 45
 
 # Wait for it to load
 tuistory -s claude wait "Claude Code" --timeout 15000
@@ -73,7 +73,7 @@ tuistory -s claude close
 
 ```bash
 # Launch Node.js debugger (assuming app.js has a debugger statement)
-tuistory -s debug --cols 120 -- node inspect app.js
+tuistory -- node inspect app.js -s debug --cols 120
 
 # Wait for debugger to start and continue to breakpoint
 tuistory -s debug wait "Break on start"
@@ -128,11 +128,10 @@ tuistory sessions             # List active sessions
 ### Options
 
 ```bash
--s, --session <name>  # Session name (required for most commands)
+-s, --session <name>  # Session name (defaults to <cwd-basename>-<command> for launch)
 --cols <n>            # Terminal columns (default: 120)
 --rows <n>            # Terminal rows (default: 36)
 --env <key=value>     # Environment variable (repeatable)
---attach              # For launch: attach after starting unless running in an agent
 --timeout <ms>        # Wait timeout in milliseconds
 --trim                # Trim whitespace from snapshot
 --json                # Output as JSON
@@ -205,7 +204,7 @@ tmux kill-session -t dev
 
 ```bash
 # Start dev server
-tuistory -s dev -- pnpm dev
+tuistory -- pnpm dev -s dev
 
 # Option 1: Wait for output to stabilize (when you don't know what to expect)
 tuistory -s dev wait-idle --timeout 30000
@@ -234,24 +233,26 @@ tuistory -s dev close
 
 **How `read` replaces `capture-pane`:** `snapshot` shows the current visible screen (like taking a photo of a monitor). `read` gives you the full output stream: everything the process printed since your last `read` call, with ANSI escape codes stripped. If a dev server logged 500 lines, `read` returns all 500 as clean text.
 
-### Package scripts that attach for humans
+### Package scripts with auto-attach
 
-Use `--attach` when you want a normal command, like `bun dev`, to open as an interactive tuistory session for humans while still being visible to agents later.
+tuistory auto-attaches in interactive TTY mode and runs in the background for agents. This makes it perfect for package scripts.
 
 ```json
 {
   "scripts": {
-    "dev": "tuistory -s dev --attach -- bun dev"
+    "dev": "tuistory -- bun dev -s dev"
   }
 }
 ```
 
-When you run `bun run dev`, tuistory starts the `dev` session and immediately attaches your terminal to it. If an AI coding agent runs the same script, tuistory detects the agent with `std-env`, skips the interactive attach, and leaves the session running for inspection.
+When you run `bun run dev`, tuistory starts the `dev` session and immediately attaches your terminal to it. If an AI coding agent runs the same script, tuistory detects the agent, skips the interactive attach, and leaves the session running for inspection.
+
+Running the same command again while the session is alive **reattaches to the existing session** instead of failing. This means `bun run dev` always works: first time it launches, subsequent times it reattaches.
 
 ```bash
 tuistory sessions
 tuistory read -s dev --all
-tuistory snapshot -s dev --trim
+tuistory -s dev snapshot --trim
 ```
 
 Nested sessions are refused. If `tuistory -- <command>` is run from inside another tuistory session, it prints a warning instead of creating a confusing session inside a session.

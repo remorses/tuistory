@@ -151,8 +151,14 @@ function parseEnvOptions(env: string[] | undefined): Record<string, string> {
   return result
 }
 
-function getDefaultSessionName(command: string): string {
-  return command
+function getDefaultSessionName(command: string, cwd: string): string {
+  const base = path.basename(cwd)
+  const raw = `${base}-${command}`
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-|-$/g, '')
 }
 
 function getLaunchCommandFromArgv(argv: string[]): string | null {
@@ -229,11 +235,15 @@ function createCliWithActions(
 
     The session runs inside a background daemon so it persists
     across multiple tuistory invocations. Use \`-s\` to name
-    sessions for easy reference.
+    sessions; defaults to \`<cwd-basename>-<command>\` in kebab-case.
 
-    **Tip:** Always run \`snapshot --trim\` after launch to see
-    the initial terminal state — many apps show first-run dialogs
-    or login prompts you need to handle.
+    In a TTY (interactive terminal), launch auto-attaches so you
+    see the session output live. Agents and non-TTY environments
+    get the session running in the background instead.
+
+    If a session with the same name already exists and is alive,
+    launch skips creating a new one and attaches to the existing
+    session (in TTY mode).
   `
 
   const addLaunchOptions = (command: any) => command
@@ -242,14 +252,13 @@ function createCliWithActions(
     .option('--rows <n>', z.number().default(36).describe('Terminal rows'))
     .option('--cwd <path>', 'Working directory')
     .option('--env <key=value>', z.array(z.string()).describe('Environment variable (repeatable)'))
-    .option('--attach', 'Attach after launching when not running inside an agent')
     .option('--no-wait', "Don't wait for initial data")
     .option('--timeout <ms>', z.number().default(5000).describe('Wait timeout in milliseconds'))
 
   const launchAction = async ({ command, options, runtime }: {
     command: string | null | undefined
     options: LaunchOptions
-    runtime: { process: { cwd: string } }
+    runtime: { process: { cwd: string; env: Record<string, string | undefined> } }
   }) => {
     const launchCommand = command ?? (options['--'].length > 0 ? options['--'].join(' ') : null)
     if (!launchCommand) {
@@ -258,25 +267,28 @@ function createCliWithActions(
       return
     }
 
-    const sessionName = options.session ?? getDefaultSessionName(launchCommand)
+    const sessionName = options.session ?? getDefaultSessionName(launchCommand, options.cwd ?? runtime.process.cwd)
 
     const existingSession = sessions.get(sessionName)
     if (existingSession?.isDead) {
       existingSession.close()
       sessions.delete(sessionName)
     } else if (existingSession) {
-      ctx.stderr = dedent`
-        Session "${sessionName}" already exists.
-        Existing session:
-          command: ${existingSession.currentCommand}
-          cwd: ${existingSession.currentCwd}
-          read: tuistory read -s ${shellQuote(sessionName)} --all
+      // Session is alive; return success so the client can attach to it.
+      ctx.stdout = dedent`
+        Session "${sessionName}" already running
+          with command: \`${existingSession.currentCommand}\`
+          in cwd: \`${existingSession.currentCwd}\`
+          read output with: \`tuistory read -s ${shellQuote(sessionName)} --all\`
       `
-      ctx.exitCode = 1
       return
     }
 
+    // Merge the caller's full environment so child processes inherit PATH
+    // (including node_modules/.bin entries injected by pnpm/bun/npm) and
+    // any other env vars from the caller's shell. Explicit --env flags win.
     const env = {
+      ...runtime.process.env,
       ...parseEnvOptions(options.env),
       TUISTORY_SESSION: sessionName,
     }
@@ -323,12 +335,12 @@ function createCliWithActions(
   }
 
   addLaunchOptions(cli.command('launch [command]', launchDescription))
-    .example('tuistory launch "claude" -s claude --cols 150 --rows 45')
-    .example('tuistory launch "node" -s repl --cols 120')
-    .example('tuistory launch "bash --norc" -s sh --env PS1="$ " --env FOO=bar')
+    .example('tuistory -- claude --cols 150 --rows 45')
+    .example('tuistory -- node -s repl --cols 120')
+    .example('tuistory -- bash --norc -s sh --env PS1="$ " --env FOO=bar')
     .example(dedent`
       # Launch and immediately check what the app shows:
-      tuistory launch "claude" -s ai && tuistory -s ai snapshot --trim
+      tuistory -- claude -s ai && tuistory -s ai snapshot --trim
     `)
     .action((command, options, runtime) => launchAction({ command, options, runtime }))
 
@@ -846,7 +858,7 @@ function createCliWithActions(
     .example('tuistory -s claude wait "/[0-9]+/" --timeout 30000')
     .example(dedent`
       # Start a browser login and print the URL/code once it appears:
-      tuistory launch "strada login" -s strada-login --no-wait
+      tuistory launch "strada login" -s strada-login
       tuistory -s strada-login wait "/Your code:|https?:\\/\\//i" --timeout 15000
     `)
     .example(dedent`
@@ -1302,7 +1314,7 @@ function createCliWithActions(
   // Global examples showing the full workflow pattern
   cli.example(dedent`
     # Full workflow: launch, interact, snapshot, close
-    tuistory launch "claude" -s ai --cols 150 --rows 45
+    tuistory -- claude -s ai --cols 150 --rows 45
     tuistory -s ai wait "Claude" --timeout 15000
     tuistory -s ai type "what is 2+2?"
     tuistory -s ai press enter
@@ -1593,11 +1605,12 @@ async function startRelayServer() {
   }))
 
   app.post('/cli', async (c) => {
-    const { argv, cwd } = await c.req.json() as { argv: string[]; cwd?: string }
+    const { argv, cwd, env: callerEnv } = await c.req.json() as { argv: string[]; cwd?: string; env?: Record<string, string> }
 
     const ctx: CommandResult = { stdout: '', stderr: '', exitCode: 0 }
     const cli = createCliWithActions(ctx, sessions, logger, {
       cwd,
+      env: callerEnv,
       stdout: createCommandResultStream(ctx, 'stdout'),
       stderr: createCommandResultStream(ctx, 'stderr'),
       exit: (code) => { throw new GokeProcessExit(code) },
@@ -1842,13 +1855,20 @@ async function runAttachCommand(options: { session?: string }) {
       console.log(pc.dim(`Auto-selecting session: ${sessionName}`))
     } else {
       const clack = await import('@clack/prompts')
+      const maxCommandLen = 40
+      const home = os.homedir()
       const selection = await clack.select({
         message: 'Select a session to attach',
-        options: alive.map((s) => ({
-          value: s.name,
-          label: s.name,
-          hint: `${s.cols}x${s.rows}`,
-        })),
+        options: alive.map((s) => {
+          const displayCwd = s.cwd.startsWith(home) ? '~' + s.cwd.slice(home.length) : s.cwd
+          const truncatedCmd = s.command.length > maxCommandLen
+            ? s.command.slice(0, maxCommandLen) + '…'
+            : s.command
+          return {
+            value: s.name,
+            label: `${s.name} ${pc.dim(displayCwd)} ${pc.dim(truncatedCmd)}`,
+          }
+        }),
       })
 
       if (clack.isCancel(selection)) {
@@ -1937,7 +1957,7 @@ async function runCliClient() {
     try: () => fetch(`http://127.0.0.1:${RELAY_PORT}/cli`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ argv: process.argv, cwd: process.cwd() }),
+      body: JSON.stringify({ argv: process.argv, cwd: process.cwd(), env: process.env }),
     }),
     catch: (e) => new RelayConnectionError({ port: String(RELAY_PORT), reason: errorReason(e), cause: e }),
   })
@@ -1957,26 +1977,29 @@ async function runCliClient() {
     process.exit(1)
   }
 
-  if (result.stdout) {
-    console.log(result.stdout)
-  }
   if (result.stderr) {
     console.error(pc.red(result.stderr))
   }
 
-  if (
-    isLaunchCommand
-    && inspectCli.options.attach
-    && result.exitCode === 0
-  ) {
-    if (isAgent) {
+  // For launch commands: auto-attach in interactive TTY, print status otherwise.
+  // Agents and non-TTY environments get the session running in the background.
+  if (isLaunchCommand && result.exitCode === 0) {
+    const shouldAttach = process.stdout.isTTY && !isAgent
+    if (shouldAttach) {
+      const defaultNameCwd = inspectCli.options.cwd ?? process.cwd()
+      const sessionName = inspectCli.options.session ?? (launchCommand ? getDefaultSessionName(launchCommand, defaultNameCwd) : undefined)
+      await runAttachCommand({ session: sessionName })
       process.exit(0)
     }
-
-    await runAttachCommand({ session: inspectCli.options.session ?? (launchCommand ? getDefaultSessionName(launchCommand) : undefined) })
+    if (result.stdout) {
+      console.log(result.stdout)
+    }
     process.exit(0)
   }
 
+  if (result.stdout) {
+    console.log(result.stdout)
+  }
   process.exit(result.exitCode)
 }
 
