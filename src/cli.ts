@@ -173,6 +173,7 @@ function getLaunchCommandFromArgv(argv: string[]): string | null {
   return null
 }
 
+
 function shellQuote(value: string): string {
   if (/^[a-zA-Z0-9_./:-]+$/.test(value)) return value
   return `'${value.replaceAll(`'`, `'\\''`)}'`
@@ -1919,10 +1920,17 @@ async function runAttachCommand(options: { session?: string }) {
   // TODO: Remove bun re-spawn when opentui supports Node.js natively.
   // OpenTUI's Zig renderer currently requires Bun's FFI — running under
   // Node.js will fail at createCliRenderer(). Detect runtime and re-spawn.
+  //
+  // The re-spawn passes only `attach -s <session>` instead of the original
+  // argv. This avoids a Bun bug where `--` is stripped from process.argv
+  // (https://github.com/oven-sh/bun/issues/13984), which would cause the
+  // re-spawned process to misparse child command flags as tuistory options.
   const isBun = typeof globalThis.Bun !== 'undefined'
   if (!isBun) {
     const { spawnSync } = await import('node:child_process')
-    const result = spawnSync('bun', [__filename, ...process.argv.slice(2)], {
+    const args = [__filename, 'attach']
+    if (options.session) args.push('-s', options.session)
+    const result = spawnSync('bun', args, {
       stdio: 'inherit',
       env: process.env,
     })
