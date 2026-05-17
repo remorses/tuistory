@@ -1,23 +1,21 @@
 ---
 name: tuistory
 description: |
-  Control and monitor terminal applications. Supports running TUI processes in background. TMUX replacement for agents. Can control fully interactive TUI apps like claude or opencode.
+  tmux for AI agents. Run dev servers and TUIs in named background sessions that agents can read, wait on, snapshot, and type into. Replaces tmux with reactive waiting instead of blind `sleep`. Projects wrap their dev script with tuistory (`"dev": "tuistory -- next dev"`) so agents get a background session and humans get auto-attached.
 
-  Use tuistory and read the skill when you need to:
-  - Run background processes for agents like dev servers. prefer it over `tmux` because it waits for real output instead of guessing with `sleep`
-  - Control interactive CLIs and TUIs by typing, pressing keys, clicking, waiting, and taking snapshots
-  - Write Playwright-style tests for terminal apps with `vitest` or `bun:test`
+  Use tuistory when you need to:
+  - Run background dev servers or long-lived processes
+  - Control interactive CLIs and TUIs (type, press keys, click, wait, snapshot)
+  - Write Playwright-style tests for terminal apps
 
-  It has **2 modes**:
-  - **CLI** (`tuistory`) for persistent background sessions and terminal automation. **Run `tuistory --help` first.**
-  - **JS/TS API** (`launchTerminal`) for writing tests (like playwright for TUIs) and programmatic control in scripts.
+  **CLI** (`tuistory`) for background sessions. **JS/TS API** (`launchTerminal`) for programmatic control and tests.
 ---
 
 # tuistory
 
-Playwright for terminal apps. Use it to run background processes for agents, drive interactive TUIs, and write Playwright-style tests for CLIs and TUIs.
+Run dev servers and terminal commands that AI agents can read, wait on, and type into. Wrap any command in a named background session. Humans get auto-attached; agents get a session they can inspect with `read`, `snapshot`, `wait`, and `type`.
 
-Prefer tuistory over `tmux` for agent automation. It is better because it reacts to terminal output with `wait` and `wait-idle` instead of wasting time on blind `sleep` calls. That makes scripts both faster and more reliable.
+Prefer tuistory over `tmux` for agent automation. It reacts to terminal output with `wait` and `wait-idle` instead of wasting time on blind `sleep` calls. That makes scripts both faster and more reliable.
 
 Every time you use tuistory, you MUST run these two commands first. NEVER pipe to head/tail, read the full output:
 
@@ -29,14 +27,28 @@ tuistory --help
 curl -s https://raw.githubusercontent.com/remorses/tuistory/refs/heads/main/README.md
 ```
 
+## Dev script pattern
+
+When a project has `"dev": "tuistory -- next dev"` in package.json, running `pnpm dev` gives agents a background session. The session name is auto-derived from `<cwd-basename>-<command>` in kebab-case. If the session is already running, agents get a message like:
+
+```
+Session "myapp-next-dev" already running
+  with command: `next dev`
+  read output with: `tuistory read -s myapp-next-dev --all`
+```
+
+Agents can then use `tuistory read -s myapp-next-dev`, `tuistory -s myapp-next-dev wait "ready"`, etc. to inspect the running process.
+
 ## Key rules
 
+- **Options before `--`, command after.** Everything after `--` is passed verbatim to the child process. `tuistory -s myserver --cols 150 -- node server.js` is correct. `tuistory -- node server.js -s myserver` is wrong.
+- Session names are auto-derived from `<cwd-basename>-<command>`. You usually don't need `-s` when launching.
 - Always run `snapshot --trim` after every CLI action to see the current terminal state
 - Always set a timeout on `waitForText` for async operations
 - String patterns are case-sensitive by default. Use regex like `/ready/i` when casing may vary.
 - Use `trimEnd: true` in `session.text()` to avoid trailing whitespace in snapshots
 - Close sessions in test teardown to avoid leaked processes
-- Use `--cols` and `--rows` to control terminal size — affects TUI layout
+- Use `--cols` and `--rows` to control terminal size, they affect TUI layout
 - Use `--pixel-ratio 2` for sharp screenshot images
 
 ## Feedback loop
@@ -46,21 +58,21 @@ Use an **observe → act → observe** loop, like Playwright but for terminals.
 ### Background process instead of tmux
 
 ```bash
-# start a server in the background
-tuistory -s dev -- bun run dev
+# start a server in the background (session name auto-derived)
+tuistory -- bun run dev
 
 # wait for actual output instead of sleep 5
 # use regex so this still matches Ready, READY, etc.
-tuistory -s dev wait "/ready/i" --timeout 30000
+tuistory -s myapp-bun-run-dev wait "/ready/i" --timeout 30000
 
 # read everything the process printed
-tuistory read -s dev
+tuistory read -s myapp-bun-run-dev
 
 # later, read only the new output
-tuistory read -s dev
+tuistory read -s myapp-bun-run-dev
 
 # restart the server (sends Ctrl+C, waits, relaunches same command/cwd/env)
-tuistory -s dev restart
+tuistory -s myapp-bun-run-dev restart
 ```
 
 Why this is better than `tmux`:

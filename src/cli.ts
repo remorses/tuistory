@@ -270,6 +270,16 @@ function createCliWithActions(
 
     const sessionName = options.session ?? getDefaultSessionName(launchCommand, options.cwd ?? runtime.process.cwd)
 
+    // Evict dead sessions older than 1 day to prevent unbounded memory growth.
+    // Runs opportunistically on each launch instead of a periodic timer.
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000
+    for (const [name, s] of sessions) {
+      if (s.isDead && s.exitedAt && Date.now() - s.exitedAt > ONE_DAY_MS) {
+        s.close()
+        sessions.delete(name)
+      }
+    }
+
     const existingSession = sessions.get(sessionName)
     if (existingSession?.isDead) {
       existingSession.close()
