@@ -139,6 +139,28 @@ tuistory sessions             # List active sessions
 --follow              # For read: block until new output
 ```
 
+### Environment Inheritance
+
+tuistory forwards the **full environment** from the calling shell to child processes. This means `node_modules/.bin` entries that package managers like **pnpm**, **bun**, and **npm** inject into PATH are preserved inside tuistory sessions.
+
+You can run local package binaries directly without prefixing them with `pnpm exec` or `npx`:
+
+```bash
+# These work because tuistory inherits the caller's PATH
+tuistory -- vitest run -s tests
+tuistory -- tsc --noEmit -s typecheck
+tuistory -- eslint src/ -s lint
+```
+
+No need for `pnpm exec vitest` or `npx tsc`. As long as the binary is in your `node_modules/.bin` and you launched tuistory from a shell where the package manager set up PATH (which is the default when running via `pnpm run`, `bun run`, or any script in `package.json`), it just works.
+
+Explicit `--env` flags override inherited values:
+
+```bash
+# Override a specific env var while keeping everything else from the caller
+tuistory -- my-server -s dev --env NODE_ENV=production
+```
+
 ### Tips for Successful Automation
 
 **Run `snapshot` after every action.** Terminal applications are stateful and may show dialogs, prompts, or errors. Always check the current state:

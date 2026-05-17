@@ -355,6 +355,22 @@ describe('CLI error handling', () => {
     await runCli(['close', ...s])
   }, 10000)
 
+  test('launch inherits caller environment variables', async () => {
+    // The CLI client sends its full process.env to the relay, so child
+    // processes inherit env vars from the caller's shell (including
+    // node_modules/.bin in PATH injected by pnpm/bun).
+    const s = session('caller-env-test')
+    const launch = await runCli(['launch', 'printf "$CALLER_CUSTOM_VAR"', ...s], {
+      env: { CALLER_CUSTOM_VAR: 'from-caller-shell' },
+    })
+    expect(launch.exitCode).toBe(0)
+
+    const output = await runCli(['read', ...s, '--all', '--trim'])
+    expect(output.stdout).toBe('from-caller-shell')
+
+    await runCli(['close', ...s])
+  }, 10000)
+
   test('launch skips auto-attach inside an agent', async () => {
     const s = session('agent-attach-test')
     const launch = await runCli(['launch', 'echo agent attach', ...s], {
