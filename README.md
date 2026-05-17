@@ -329,6 +329,15 @@ tuistory daemon-stop    # Stops daemon and closes all sessions
 tuistory log-path       # Print the daemon log file path
 ```
 
+### Security model
+
+The relay daemon binds to `127.0.0.1` only, so other machines on the LAN cannot reach it. But a browser tab on the same machine can still open a connection to localhost, and **WebSockets are not subject to CORS once the handshake completes**. To stop a malicious website from piping shell commands into your PTY sessions, the daemon enforces two rules on every request (HTTP and WebSocket upgrades alike):
+
+- The request must not include an `Origin` header. Node and Bun `fetch`/`WebSocket` clients (the tuistory CLI itself) never send one; browsers always do.
+- The `Host` header must match `127.0.0.1:<port>`, `localhost:<port>`, or `[::1]:<port>`. This blocks DNS rebinding attacks where a public domain temporarily resolves to `127.0.0.1`.
+
+Requests that fail either check are answered with `403 forbidden` and logged to `~/.tuistory/relay-server.log` (or `/tmp/tuistory/relay-server.log`). Do **not** "fix" this by adding permissive CORS headers; the daemon executes arbitrary shell input, so cross-origin access is RCE.
+
 ## Library Usage (Playwright for terminals)
 
 Use tuistory programmatically in tests or scripts:

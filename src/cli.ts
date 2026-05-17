@@ -1521,6 +1521,46 @@ async function waitForRelay(timeoutMs: number = 5000, minVersion?: string): Prom
   return false
 }
 
+// Security: reject any request that doesn't look like it came from a local,
+// non-browser client. The daemon binds to 127.0.0.1 so remote machines cannot
+// reach it, but a browser tab on the same machine still can. Browsers do NOT
+// enforce CORS on WebSocket frames once the handshake completes, and the
+// `c.req.json()` parser accepts text/plain bodies, so a malicious website
+// could otherwise pipe arbitrary input into PTY shells (full RCE).
+//
+// Rules:
+//   - `Origin` header must be absent. Legitimate clients (Node/Bun fetch,
+//     Bun's WebSocket, the CLI itself) never send it; browsers always do.
+//   - `Host` header must point to a loopback address with the relay port.
+//     This blocks DNS rebinding attacks (Host: attacker.com → 127.0.0.1).
+//   - `Sec-Fetch-Site`, if present, must be `same-origin` or `none`. Modern
+//     browsers always send this and page scripts cannot forge it.
+//
+// Returns null if the request is allowed, or a reason string for 403.
+export function checkLocalOnly(req: Request, port: number): string | null {
+  const origin = req.headers.get('origin')
+  if (origin !== null && origin !== '') {
+    return `forbidden: cross-origin request from ${origin}`
+  }
+
+  const host = req.headers.get('host')
+  const allowedHosts = new Set([
+    `127.0.0.1:${port}`,
+    `localhost:${port}`,
+    `[::1]:${port}`,
+  ])
+  if (host === null || !allowedHosts.has(host.toLowerCase())) {
+    return `forbidden: unexpected Host header "${host ?? ''}"`
+  }
+
+  const fetchSite = req.headers.get('sec-fetch-site')
+  if (fetchSite !== null && fetchSite !== 'same-origin' && fetchSite !== 'none') {
+    return `forbidden: Sec-Fetch-Site is "${fetchSite}"`
+  }
+
+  return null
+}
+
 // Start relay server (daemon mode)
 async function startRelayServer() {
   const { Hono } = await import('hono')
@@ -1532,6 +1572,19 @@ async function startRelayServer() {
 
   const app = new Hono()
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
+
+  // Reject browser-originated and DNS-rebound requests before any handler
+  // runs. Returning a Response from middleware short-circuits the chain, so
+  // this also aborts WebSocket upgrades (the upgrade only happens inside the
+  // /attach handler, which never runs when this returns 403).
+  app.use('*', async (c, next) => {
+    const denial = checkLocalOnly(c.req.raw, RELAY_PORT)
+    if (denial !== null) {
+      void logger.error(`Rejected ${c.req.method} ${c.req.path}: ${denial}`)
+      return c.text(denial, 403)
+    }
+    return next()
+  })
 
   app.get('/version', (c) => {
     return c.json({ version: VERSION })

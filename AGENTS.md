@@ -4,9 +4,21 @@ this package is supposed to run both in node and bun. to test node.js features w
 
 ## running cli locally
 
-use `bun src/cli.ts` instead of tuistory to run the cli locally for testing
+use `bun src/cli.ts` instead of tuistory to run the cli locally for testing.
 
-after changing CLI flags, commands, or parsing behavior, restart the relay before local manual testing. the daemon keeps the old CLI code loaded, so tests like `bun src/cli.ts launch ...` can look broken until you run `bun src/cli.ts daemon-stop` and let the next command start a fresh relay.
+**ALWAYS stop the daemon before manually testing any code change.** the relay daemon is a long-lived background process that keeps the **old compiled code** in memory across CLI invocations. so `bun src/cli.ts launch ...` will silently exercise the previous version of your code, and changes to middleware, route handlers, session logic, CLI flags, parsing, or anything else in the daemon process will appear to be ignored.
+
+run this before every local smoke test:
+
+```bash
+bun src/cli.ts daemon-stop
+# also stop the test daemon if you've been running the test suite
+TUISTORY_PORT=19951 bun src/cli.ts daemon-stop
+```
+
+the next `bun src/cli.ts <command>` will spawn a fresh daemon with your updated code.
+
+the test suite already handles this automatically: `src/cli.test.ts` uses port `19951` (separate from the default `19977` so it never touches user sessions) and `killTestDaemon()` runs in `beforeAll` / `afterAll`. you do **not** need to manually stop daemons before running `bun test`; just remember to stop them before manual `bun src/cli.ts ...` invocations.
 
 ## always use bun, never tsx
 

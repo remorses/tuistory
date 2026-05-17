@@ -998,3 +998,117 @@ describe('attach support', () => {
     await runCli(['close', ...s])
   }, 15000)
 })
+
+describe('Relay daemon security (Origin / Host checks)', () => {
+  // Ensure the daemon is running for these tests by issuing any CLI command first.
+  beforeAll(async () => {
+    await runCli(['sessions'])
+  })
+
+  const port = process.env.TUISTORY_PORT!
+  const relay = `http://127.0.0.1:${port}`
+
+  test('GET /version with Origin header is rejected with 403', async () => {
+    const res = await fetch(`${relay}/version`, {
+      headers: { Origin: 'https://evil.example.com' },
+    })
+    expect(res.status).toBe(403)
+    const body = await res.text()
+    expect(body).toContain('forbidden')
+  })
+
+  test('GET /version with no Origin still works (legitimate Node fetch)', async () => {
+    const res = await fetch(`${relay}/version`)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toHaveProperty('version')
+  })
+
+  test('GET /sessions with Origin header is rejected with 403', async () => {
+    const res = await fetch(`${relay}/sessions`, {
+      headers: { Origin: 'https://evil.example.com' },
+    })
+    expect(res.status).toBe(403)
+  })
+
+  test('POST /cli with Origin header is rejected (blocks browser RCE)', async () => {
+    const res = await fetch(`${relay}/cli`, {
+      method: 'POST',
+      headers: {
+        // text/plain is a CORS "simple" content-type — no preflight is sent.
+        // Without our middleware this request would launch a real session.
+        'Content-Type': 'text/plain',
+        Origin: 'https://evil.example.com',
+      },
+      body: JSON.stringify({ argv: ['sessions'], cwd: '/', env: {} }),
+    })
+    expect(res.status).toBe(403)
+  })
+
+  test('POST /cli with rebound Host header is rejected (blocks DNS rebinding)', async () => {
+    const res = await fetch(`${relay}/cli`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Host: 'attacker.example.com',
+      },
+      body: JSON.stringify({ argv: ['sessions'], cwd: '/', env: {} }),
+    })
+    expect(res.status).toBe(403)
+  })
+
+  test('WebSocket upgrade with Origin header is rejected before any frame', async () => {
+    // Send a raw HTTP/1.1 WebSocket upgrade request with a forged Origin and
+    // assert the server rejects it. A legitimate response would be `HTTP/1.1
+    // 101 Switching Protocols`; the rejection path may either close the socket
+    // immediately or write a 403 status line, depending on @hono/node-ws.
+    // Both outcomes are acceptable — what matters is that no 101 is sent.
+    const net = await import('node:net')
+    const response = await new Promise<string>((resolve, reject) => {
+      const socket = net.connect(Number(port), '127.0.0.1')
+      const chunks: Buffer[] = []
+      socket.on('connect', () => {
+        const req =
+          'GET /attach HTTP/1.1\r\n' +
+          `Host: 127.0.0.1:${port}\r\n` +
+          'Upgrade: websocket\r\n' +
+          'Connection: Upgrade\r\n' +
+          'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n' +
+          'Sec-WebSocket-Version: 13\r\n' +
+          'Origin: https://evil.example.com\r\n' +
+          '\r\n'
+        socket.write(req)
+      })
+      socket.on('data', (c) => chunks.push(c))
+      socket.on('close', () => resolve(Buffer.concat(chunks).toString('utf8')))
+      socket.on('error', reject)
+      setTimeout(() => {
+        socket.destroy()
+        reject(new Error('upgrade test timed out'))
+      }, 5000)
+    })
+    // The critical security invariant: no protocol switch happened.
+    expect(response).not.toContain('101 Switching Protocols')
+    // Either the server wrote a 403 line, or it closed the socket with no
+    // response. Both mean the malicious upgrade was aborted.
+    if (response.length > 0) {
+      expect(response).toMatch(/^HTTP\/1\.1 403\b/)
+    }
+  })
+
+  test('WebSocket upgrade without Origin still succeeds (legitimate attach client)', async () => {
+    const s = session('security-attach-ok')
+    await runCli(['launch', 'sleep 30', ...s])
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/attach`)
+    const opened = await new Promise<boolean>((resolve) => {
+      ws.addEventListener('open', () => resolve(true))
+      ws.addEventListener('error', () => resolve(false))
+      setTimeout(() => resolve(false), 3000)
+    })
+    expect(opened).toBe(true)
+
+    ws.close()
+    await runCli(['close', ...s])
+  }, 10000)
+})
