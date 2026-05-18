@@ -1840,31 +1840,14 @@ async function startRelayServer() {
     return c.json(ctx)
   })
 
-  // Retry serve() in case the port is still being released by the OS after a
-  // daemon restart. The client waits for the port to be free before spawning us,
-  // but there's a small window where the port can still be in TIME_WAIT.
-  let server: ReturnType<typeof serve>
-  const maxRetries = 5
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    const result = errore.try(() => serve({
-      fetch: app.fetch,
-      port: RELAY_PORT,
-      hostname: '127.0.0.1',
-    }))
-    if (!(result instanceof Error)) {
-      server = result
-      break
-    }
-    if (attempt === maxRetries - 1) {
-      await logger.error(`Failed to bind port ${RELAY_PORT} after ${maxRetries} attempts: ${result.message}`)
-      process.exit(1)
-    }
-    await logger.log(`Port ${RELAY_PORT} in use, retrying in 500ms (attempt ${attempt + 1}/${maxRetries})`)
-    await new Promise((r) => setTimeout(r, 500))
-  }
+  const server = serve({
+    fetch: app.fetch,
+    port: RELAY_PORT,
+    hostname: '127.0.0.1',
+  })
 
   // Inject WebSocket support into the HTTP server
-  injectWebSocket(server!)
+  injectWebSocket(server)
 
   // Write PID file so killRelay() can send SIGTERM instead of kill-by-port
   ensureTuistoryDir()
@@ -1982,10 +1965,13 @@ async function ensureRelayRunning(): Promise<void> {
             console.error(pc.yellow(`Relay server version mismatch (server: ${serverVersion}, client: ${VERSION}), restarting...`))
             await killRelay()
             // Wait for the port to be free before spawning the new daemon.
-            // The OS may keep the socket briefly after the process exits.
+            // The previous listener may not be fully closed yet.
             const portFree = await waitForPortFree(RELAY_PORT, 5000)
             if (!portFree) {
-              console.error(pc.red(`Port ${RELAY_PORT} still in use after killing old daemon`))
+              const err = new RelayStartError({ action: 'restart', reason: `port ${RELAY_PORT} still in use after killing old daemon` })
+              console.error(pc.red(err.message))
+              printRelayLogTail()
+              process.exit(1)
             }
             spawnRelayServer()
             const started = await waitForRelay(5000, VERSION)
