@@ -1901,7 +1901,10 @@ function spawnRelayServer(): void {
   const serverProcess = spawn(execPath, [__filename], {
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env, TUISTORY_RELAY: '1' },
+    // Explicitly set TUISTORY_PORT so the spawned daemon binds to the same
+    // port the client expects. Without this, an inherited TUISTORY_PORT from
+    // an outer tuistory session can make the daemon bind to the wrong port.
+    env: { ...process.env, TUISTORY_RELAY: '1', TUISTORY_PORT: String(RELAY_PORT) },
   })
   serverProcess.unref()
 }
