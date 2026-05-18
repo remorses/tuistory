@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
@@ -1516,9 +1517,10 @@ async function killProcessByPid(pid: number): Promise<boolean> {
   const sendResult = errore.try(() => process.kill(pid, 'SIGTERM'))
   if (sendResult instanceof Error) return true // Process doesn't exist (stale PID)
 
-  // Wait for process to exit (up to 3s)
+  // Wait for process to exit (up to 5s — graceful shutdown closes sessions +
+  // HTTP server which can take a few seconds with many active sessions)
   const start = Date.now()
-  while (Date.now() - start < 3000) {
+  while (Date.now() - start < 5000) {
     const alive = errore.try(() => process.kill(pid, 0))
     if (alive instanceof Error) return true // Process exited
     await new Promise((r) => setTimeout(r, 100))
@@ -1590,6 +1592,32 @@ async function waitForRelay(timeoutMs: number = 5000, minVersion?: string): Prom
       }
     }
     await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  return false
+}
+
+// Check if a port is currently in use by attempting to bind to it.
+// Returns true if the port is occupied, false if it's free.
+function isPortInUse(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = net.createServer()
+    server.once('error', () => resolve(true))
+    server.once('listening', () => {
+      server.close(() => resolve(false))
+    })
+    server.listen(port, '127.0.0.1')
+  })
+}
+
+// Wait for a port to become free after killing a process. The OS may keep the
+// socket in TIME_WAIT briefly after the process exits, so we poll until the
+// port is actually bindable. This prevents EADDRINUSE when spawning the new daemon.
+async function waitForPortFree(port: number, timeoutMs: number = 5000): Promise<boolean> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    const inUse = await isPortInUse(port)
+    if (!inUse) return true
+    await new Promise((r) => setTimeout(r, 100))
   }
   return false
 }
@@ -1812,14 +1840,31 @@ async function startRelayServer() {
     return c.json(ctx)
   })
 
-  const server = serve({
-    fetch: app.fetch,
-    port: RELAY_PORT,
-    hostname: '127.0.0.1',
-  })
+  // Retry serve() in case the port is still being released by the OS after a
+  // daemon restart. The client waits for the port to be free before spawning us,
+  // but there's a small window where the port can still be in TIME_WAIT.
+  let server: ReturnType<typeof serve>
+  const maxRetries = 5
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const result = errore.try(() => serve({
+      fetch: app.fetch,
+      port: RELAY_PORT,
+      hostname: '127.0.0.1',
+    }))
+    if (!(result instanceof Error)) {
+      server = result
+      break
+    }
+    if (attempt === maxRetries - 1) {
+      await logger.error(`Failed to bind port ${RELAY_PORT} after ${maxRetries} attempts: ${result.message}`)
+      process.exit(1)
+    }
+    await logger.log(`Port ${RELAY_PORT} in use, retrying in 500ms (attempt ${attempt + 1}/${maxRetries})`)
+    await new Promise((r) => setTimeout(r, 500))
+  }
 
   // Inject WebSocket support into the HTTP server
-  injectWebSocket(server)
+  injectWebSocket(server!)
 
   // Write PID file so killRelay() can send SIGTERM instead of kill-by-port
   ensureTuistoryDir()
@@ -1936,6 +1981,12 @@ async function ensureRelayRunning(): Promise<void> {
           } else {
             console.error(pc.yellow(`Relay server version mismatch (server: ${serverVersion}, client: ${VERSION}), restarting...`))
             await killRelay()
+            // Wait for the port to be free before spawning the new daemon.
+            // The OS may keep the socket briefly after the process exits.
+            const portFree = await waitForPortFree(RELAY_PORT, 5000)
+            if (!portFree) {
+              console.error(pc.red(`Port ${RELAY_PORT} still in use after killing old daemon`))
+            }
             spawnRelayServer()
             const started = await waitForRelay(5000, VERSION)
             if (!started) {
