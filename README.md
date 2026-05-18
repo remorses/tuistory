@@ -217,6 +217,20 @@ tuistory -- node server.js -s myserver --cols 150
 
 When no `-s` is given, the session name is auto-derived from `<cwd-basename>-<command>` in kebab-case. For most use cases (especially `package.json` scripts) you don't need to pass `-s` at all.
 
+### Chaining tools that use `--`
+
+Tools like [sigillo](https://github.com/remorses/sigillo) and [kimaki tunnel](https://github.com/remorses/kimaki) also use `--` to separate their options from a child command. You can nest them because each tool only consumes the **first** `--` it sees; the rest passes through verbatim.
+
+```json
+{
+  "scripts": {
+    "dev": "tuistory -- sigillo run -- kimaki tunnel -- next dev"
+  }
+}
+```
+
+tuistory should always be the **outermost wrapper** so the entire process tree lives in one session that agents can read, wait on, and restart.
+
 ## Background Processes (replaces tmux)
 
 tuistory replaces tmux for running background processes. The key advantage: **reactive waiting** instead of blind `sleep`.
