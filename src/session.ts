@@ -204,6 +204,8 @@ export class Session {
   exitInfo: { exitCode: number; signal: number } | null = null
   /** Timestamp (ms) when the PTY process exited, used for stale session eviction. */
   exitedAt: number | null = null
+  /** Timestamp (ms) when the session was created. */
+  readonly startedAt: number = Date.now()
   private exitListeners: Array<(info: { exitCode: number; signal: number }) => void> = []
 
   constructor(options: LaunchOptions) {

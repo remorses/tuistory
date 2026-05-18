@@ -198,6 +198,18 @@ function ansi(code: string, value: string): string {
   return `\x1b[${code}m${value}\x1b[39m`
 }
 
+/** Human-readable relative time like "3m ago", "2h ago", "1d ago". */
+function timeAgo(timestamp: number): string {
+  const seconds = Math.floor((Date.now() - timestamp) / 1000)
+  if (seconds < 60) return `${seconds}s ago`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+
 // Create CLI with commands - actions write to ctx
 function createCliWithActions(
   ctx: CommandResult,
@@ -1325,6 +1337,8 @@ function createCliWithActions(
         ctx.stdout = options.json ? '[]' : 'No active sessions'
         return
       }
+      // Sort by most recently started first
+      entries.sort(([, a], [, b]) => b.startedAt - a.startedAt)
       if (options.json) {
         ctx.stdout = JSON.stringify(entries.map(([name, session]) => ({
           name,
@@ -1333,14 +1347,17 @@ function createCliWithActions(
           cols: session.currentCols,
           rows: session.currentRows,
           dead: session.isDead,
+          startedAt: session.startedAt,
         })), null, 2)
         return
       }
       const lines = [yamlKey('sessions')]
       for (const [name, session] of entries) {
         const status = session.isDead ? ansi('31', 'dead') : ansi('32', 'alive')
+        const started = timeAgo(session.startedAt)
         lines.push(`  ${ansi('90', '-')} ${yamlKey('name')} ${yamlString(name)}`)
         lines.push(`    ${yamlKey('status')} ${status}`)
+        lines.push(`    ${yamlKey('started')} ${ansi('33', started)}`)
         lines.push(`    ${yamlKey('command')} ${yamlString(session.currentCommand)}`)
         lines.push(`    ${yamlKey('cwd')} ${yamlString(session.currentCwd)}`)
         lines.push(`    ${yamlKey('cols')} ${yamlNumber(session.currentCols)}`)
@@ -1655,6 +1672,7 @@ async function startRelayServer() {
       dead: session.isDead,
       cwd: session.currentCwd,
       command: session.currentCommand,
+      startedAt: session.startedAt,
     }))
     return c.json(list)
   })
@@ -1950,6 +1968,7 @@ interface SessionInfo {
   dead: boolean
   cwd: string
   command: string
+  startedAt: number
 }
 
 // Fetch session list from relay
@@ -2010,6 +2029,9 @@ async function runAttachCommand(options: { session?: string }) {
       return
     }
 
+    // Sort by most recently started first
+    sessions.sort((a, b) => b.startedAt - a.startedAt)
+
     // Prefer alive sessions for auto-select, but show all in picker
     const alive = sessions.filter(s => !s.dead)
 
@@ -2028,9 +2050,10 @@ async function runAttachCommand(options: { session?: string }) {
             ? s.command.slice(0, maxCommandLen) + '…'
             : s.command
           const deadLabel = s.dead ? pc.red(' (exited)') : ''
+          const started = pc.dim(timeAgo(s.startedAt))
           return {
             value: s.name,
-            label: `${s.name}${deadLabel} ${pc.dim(displayCwd)} ${pc.dim(truncatedCmd)}`,
+            label: `${s.name}${deadLabel} ${started}\n${pc.dim(displayCwd)} ${pc.dim(truncatedCmd)}`,
           }
         }),
       })
