@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.7.0
+
+1. **New `--background` flag for `launch`** — skip auto-attach in TTY mode and get a help block showing all the commands to interact with the session:
+
+   ```bash
+   tuistory launch "pnpm dev" -s dev --background
+   # prints: how to read, wait, snapshot, type, press, attach, close, restart
+   ```
+
+   Useful in package.json scripts where you want to start a session without blocking the terminal.
+
+2. **Session timestamps in `sessions` and attach picker** — each session now tracks when it started. `tuistory sessions` shows relative time like "3m ago", and the attach picker sorts sessions most-recent-first with a two-line label showing name, time, cwd, and command.
+
+3. **Robust daemon restart on version upgrade** — fixed a race condition where the new daemon could hit EADDRINUSE after killing the old one. The client now waits for the port to be free before spawning, and the daemon retries with backoff if the port is still held.
+
+4. **Fixed TUISTORY_PORT env leak** — the spawned daemon now pins the port from the client's environment, preventing stale `TUISTORY_PORT` values from leaking into child processes and causing port conflicts.
+
+5. **Fixed Bun `--` stripping in attach re-spawn** — worked around a Bun bug where `--` was silently removed from the argument list when re-spawning the attach process.
+
+6. **Increased PTY idle debounce from 60ms to 200ms** — reduces false idle triggers for TUIs that render in multiple rapid flushes.
+
+7. **Hard exit on port-still-in-use** — removed a broken retry loop in the daemon's `serve()` that could silently fail. The daemon now exits immediately with a clear error if the port is taken.
+
 ## 0.6.0
 
 1. **Auto-attach in TTY mode** — `tuistory launch` now automatically attaches to the session when running in an interactive terminal. Agents and non-TTY environments still get the session running in the background. The `--attach` flag is deprecated (kept as a hidden no-op for backwards compatibility).
