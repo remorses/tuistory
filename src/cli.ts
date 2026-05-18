@@ -113,6 +113,7 @@ interface LaunchOptions {
   cwd?: string
   env?: string[]
   attach?: boolean
+  background?: boolean
   // `--no-wait` produces `noWait?: boolean` on the inferred type
   noWait?: boolean
   timeout: number
@@ -254,6 +255,7 @@ function createCliWithActions(
     .option('--cwd <path>', 'Working directory')
     .option('--env <key=value>', z.array(z.string()).describe('Environment variable (repeatable)'))
     .option('--attach', z.boolean().optional().meta({ deprecated: true, description: 'Deprecated: attach is now automatic in TTY mode' }))
+    .option('--background', 'Run in background without attaching (shows session info and how to interact)')
     .option('--no-wait', "Don't wait for initial data")
     .option('--timeout <ms>', z.number().default(5000).describe('Wait timeout in milliseconds'))
 
@@ -287,12 +289,37 @@ function createCliWithActions(
       sessions.delete(sessionName)
     } else if (existingSession) {
       // Session is alive; return success so the client can attach to it.
-      ctx.stdout = dedent`
-        Session "${sessionName}" already running
-          with command: \`${existingSession.currentCommand}\`
-          in cwd: \`${existingSession.currentCwd}\`
-          read output with: \`tuistory read -s ${shellQuote(sessionName)} --all\`
-      `
+      const q = shellQuote(sessionName)
+      if (options.background) {
+        ctx.stdout = [
+          `Session "${sessionName}" is already running.`,
+          ``,
+          `  command: ${existingSession.currentCommand}`,
+          `  cwd:     ${existingSession.currentCwd}`,
+          `  cols:    ${existingSession.currentCols}`,
+          `  rows:    ${existingSession.currentRows}`,
+          ``,
+          `Use these commands to interact with the session:`,
+          ``,
+          `  tuistory read -s ${q}            # read new output since last read`,
+          `  tuistory read -s ${q} --all      # read entire output buffer`,
+          `  tuistory -s ${q} wait "pattern"  # wait for text to appear (supports /regex/)`,
+          `  tuistory -s ${q} snapshot --trim # current terminal screen as text`,
+          `  tuistory -s ${q} type "text"     # type into the process`,
+          `  tuistory -s ${q} press enter     # press a key (enter, ctrl c, tab, ...)`,
+          `  tuistory attach -s ${q}          # attach interactively (fullscreen TUI)`,
+          `  tuistory -s ${q} close           # kill process and remove session`,
+          ``,
+          `Run tuistory --help for the full command reference.`,
+        ].join('\n')
+      } else {
+        ctx.stdout = dedent`
+          Session "${sessionName}" already running
+            with command: \`${existingSession.currentCommand}\`
+            in cwd: \`${existingSession.currentCwd}\`
+            read output with: \`tuistory read -s ${q} --all\`
+        `
+      }
       return
     }
 
@@ -342,7 +369,35 @@ function createCliWithActions(
       }
     }
 
-    ctx.stdout = `Session "${sessionName}" started`
+    if (options.background) {
+      const q = shellQuote(sessionName)
+      ctx.stdout = [
+        `Session "${sessionName}" is now running in the background.`,
+        ``,
+        `  command: ${launchCommand}`,
+        `  cwd:     ${options.cwd ?? runtime.process.cwd}`,
+        `  cols:    ${options.cols}`,
+        `  rows:    ${options.rows}`,
+        ``,
+        `The process is alive but you are not attached to it.`,
+        `Use these commands to interact with the session:`,
+        ``,
+        `  tuistory read -s ${q}            # read new output since last read`,
+        `  tuistory read -s ${q} --all      # read entire output buffer`,
+        `  tuistory -s ${q} wait "pattern"  # wait for text to appear (supports /regex/)`,
+        `  tuistory -s ${q} wait-idle       # wait until output stabilizes`,
+        `  tuistory -s ${q} snapshot --trim # current terminal screen as text`,
+        `  tuistory -s ${q} type "text"     # type into the process`,
+        `  tuistory -s ${q} press enter     # press a key (enter, ctrl c, tab, ...)`,
+        `  tuistory attach -s ${q}          # attach interactively (fullscreen TUI)`,
+        `  tuistory -s ${q} restart         # restart the process`,
+        `  tuistory -s ${q} close           # kill process and remove session`,
+        ``,
+        `Run tuistory --help for the full command reference.`,
+      ].join('\n')
+    } else {
+      ctx.stdout = `Session "${sessionName}" started`
+    }
     void logger.log(`Session "${sessionName}" started: ${launchCommand}`)
   }
 
@@ -2092,8 +2147,10 @@ async function runCliClient() {
 
   // For launch commands: auto-attach in interactive TTY, print status otherwise.
   // Agents and non-TTY environments get the session running in the background.
+  // --background explicitly skips auto-attach and shows session info.
   if (isLaunchCommand && result.exitCode === 0) {
-    const shouldAttach = process.stdout.isTTY && !isAgent
+    const isBackground = inspectCli.options.background === true
+    const shouldAttach = process.stdout.isTTY && !isAgent && !isBackground
     if (shouldAttach) {
       const defaultNameCwd = inspectCli.options.cwd ?? process.cwd()
       const sessionName = inspectCli.options.session ?? (launchCommand ? getDefaultSessionName(launchCommand, defaultNameCwd) : undefined)

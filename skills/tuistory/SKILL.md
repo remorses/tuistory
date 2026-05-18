@@ -39,6 +39,23 @@ Session "myapp-next-dev" already running
 
 Agents can then use `tuistory read -s x`, `tuistory -s x wait "ready"`, etc. to inspect the running process.
 
+## Dev script convention for projects
+
+Projects should wrap their dev server command with `tuistory --` in `package.json` scripts. This ensures agents never hang on an interactive long-lived process, and dev servers started by humans are automatically shared with agents.
+
+```json
+{
+  "scripts": {
+    "dev": "tuistory -- next dev",
+    "dev:api": "tuistory -- node api/server.js"
+  }
+}
+```
+
+When a human runs `pnpm dev`, they get auto-attached to the terminal (same experience as running the command directly). When an agent runs `pnpm dev`, the process launches in the background and the command returns immediately. If the session is already running, both humans and agents reuse it instead of fighting over ports.
+
+**Agents MUST never stop or close a session started by another user or agent.** Dev server sessions are shared resources. Only close them when the user explicitly asks to stop the dev server. Default to leaving sessions running. Use `read`, `wait`, and `snapshot` to inspect them without disrupting them.
+
 ## Key rules
 
 - **Options before `--`, command after.** Everything after `--` is passed verbatim to the child process. `tuistory -s myserver --cols 150 -- node server.js` is correct. `tuistory -- node server.js -s myserver` is wrong.
