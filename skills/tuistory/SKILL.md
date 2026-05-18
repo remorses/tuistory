@@ -56,6 +56,48 @@ When a human runs `pnpm dev`, they get auto-attached to the terminal (same exper
 
 **Agents MUST never stop or close a session started by another user or agent.** Dev server sessions are shared resources. Only close them when the user explicitly asks to stop the dev server. Default to leaving sessions running. Use `read`, `wait`, and `snapshot` to inspect them without disrupting them.
 
+## Setting up a project to use tuistory
+
+When creating a new project or adding tuistory to an existing one, wrap dev and long-running commands with `tuistory --` in `package.json` scripts:
+
+```json
+{
+  "scripts": {
+    "dev": "tuistory -- next dev",
+    "dev:api": "tuistory -- node api/server.js",
+    "dev:worker": "tuistory -- wrangler dev"
+  }
+}
+```
+
+After wrapping the scripts, add a dev server section to the **project's** `AGENTS.md` so other agents know how to use it. Use `pnpm dev` for pnpm projects and `bun dev` for bun projects (check the lock file). Example to add:
+
+```markdown
+## dev server
+
+this project uses tuistory for dev server sessions. to start the dev server simply run `pnpm dev` (or `bun dev` for bun projects). this will automatically start a new background session or reuse an existing one if already running. you do not need to use tuistory commands directly.
+
+to restart the dev server after code changes that require a restart:
+
+\`\`\`bash
+tuistory -s x restart
+\`\`\`
+
+to read the dev server output:
+
+\`\`\`bash
+tuistory read -s x
+\`\`\`
+
+to wait for the server to be ready:
+
+\`\`\`bash
+tuistory -s x wait "/ready|listening/i" --timeout 30000
+\`\`\`
+```
+
+This way agents treat `pnpm dev` / `bun dev` as a simple command that just works. They don't need to know about tuistory internals unless they need to inspect output or restart.
+
 ## Key rules
 
 - **Options before `--`, command after.** Everything after `--` is passed verbatim to the child process. `tuistory -s myserver --cols 150 -- node server.js` is correct. `tuistory -- node server.js -s myserver` is wrong.
