@@ -34,6 +34,18 @@ tuistory launch "pnpm dev" -s myapp
 tuistory launch "kimaki tunnel -- pnpm dev" -s dev
 ```
 
+**bun strips `--` from process.argv** ([bun#13984](https://github.com/oven-sh/bun/issues/13984)). when testing locally with `bun src/cli.ts`, use `launch` with a quoted string instead of `--`:
+
+```bash
+# local dev testing (bun strips --)
+bun src/cli.ts launch 'echo hello world'
+
+# NOT: bun src/cli.ts -- echo hello world
+# bun eats -- and only "echo" reaches the CLI, "hello world" is lost
+```
+
+the installed `tuistory` binary does not have this issue because it runs as a shebang script.
+
 ## always use bun, never tsx
 
 always use `bun` to run typescript files, never `tsx`. the cli daemon spawns using `process.execPath` so it uses the same runtime. using tsx can cause issues with wrong module resolution paths.
