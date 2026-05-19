@@ -2144,29 +2144,16 @@ async function runCliClient() {
   const isLaunchCommand = inspectCli.matchedCommandName === 'launch'
     || (inspectCli.matchedCommandName === undefined && launchCommand !== null)
 
-  if (isLaunchCommand && process.env.TUISTORY_SESSION) {
-    const attemptedCommand = `tuistory ${process.argv.slice(2).map(shellQuote).join(' ')}`
-    console.error(pc.yellow(dedent`
-      Refusing to launch a nested tuistory session inside "${process.env.TUISTORY_SESSION}".
-
-      Attempted tuistory command:
-        ${attemptedCommand}
-
-      This would create a tuistory session from inside another tuistory session.
-      The command you launched is already running inside its own tuistory session.
-
-      Agent fix:
-        If you are trying to launch a package.json script or another script that starts
-        tuistory, run it normally without wrapping it in tuistory.
-        The script will start the tuistory session itself in the background.
-    `))
-    process.exit(1)
-  }
-
   // When running inside a process runner like traforo or sigillo, skip the
   // daemon/session management entirely and just exec the command directly
   // with inherited stdio. These tools already manage the child process
   // lifecycle, so adding a tuistory daemon layer is unnecessary complexity.
+  //
+  // This check runs BEFORE the nested-session guard because a common pattern
+  // is: tuistory -s dev -- kimaki tunnel -- pnpm dev
+  // The inner tuistory (from "pnpm dev") sees both TUISTORY_SESSION and
+  // TRAFORO_URL. Passthrough mode is the correct behavior here; the nested
+  // session error would be wrong since we're not actually creating a session.
   //
   // Spawns with `detached: true` on POSIX so the shell and all its children
   // form a new process group. Signals are sent to `-pid` (the whole group)
@@ -2226,6 +2213,25 @@ async function runCliClient() {
 
     for (const sig of signals) process.off(sig, forwardSignal)
     process.exit(exitCode)
+  }
+
+  if (isLaunchCommand && process.env.TUISTORY_SESSION) {
+    const attemptedCommand = `tuistory ${process.argv.slice(2).map(shellQuote).join(' ')}`
+    console.error(pc.yellow(dedent`
+      Refusing to launch a nested tuistory session inside "${process.env.TUISTORY_SESSION}".
+
+      Attempted tuistory command:
+        ${attemptedCommand}
+
+      This would create a tuistory session from inside another tuistory session.
+      The command you launched is already running inside its own tuistory session.
+
+      Agent fix:
+        If you are trying to launch a package.json script or another script that starts
+        tuistory, run it normally without wrapping it in tuistory.
+        The script will start the tuistory session itself in the background.
+    `))
+    process.exit(1)
   }
 
   if (inspectCli.matchedCommandName === 'daemon-stop') {
