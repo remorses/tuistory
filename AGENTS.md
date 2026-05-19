@@ -20,6 +20,20 @@ the next `bun src/cli.ts <command>` will spawn a fresh daemon with your updated 
 
 the test suite already handles this automatically: `src/cli.test.ts` uses port `19951` (separate from the default `19977` so it never touches user sessions) and `killTestDaemon()` runs in `beforeAll` / `afterAll`. that function kills the recorded PID, also kills anything still bound to port `19951` (covers orphans whose PID file was lost), and waits for the port to be free before tests start. you do **not** need to manually stop daemons before running `bun test`; just remember to stop them before manual `bun src/cli.ts ...` invocations.
 
+## prefer `--` over `launch`
+
+always use `tuistory -- <command>` instead of `tuistory launch "<command>"`. the `--` form is shorter and avoids quoting issues with nested commands. `launch` is a hidden alias for the same thing but `--` is the canonical syntax.
+
+```bash
+# good
+tuistory -s myapp -- pnpm dev
+tuistory -s dev -- kimaki tunnel -- pnpm dev
+
+# avoid
+tuistory launch "pnpm dev" -s myapp
+tuistory launch "kimaki tunnel -- pnpm dev" -s dev
+```
+
 ## always use bun, never tsx
 
 always use `bun` to run typescript files, never `tsx`. the cli daemon spawns using `process.execPath` so it uses the same runtime. using tsx can cause issues with wrong module resolution paths.

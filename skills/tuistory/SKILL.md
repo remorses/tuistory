@@ -98,6 +98,35 @@ tuistory -s x wait "/ready|listening/i" --timeout 30000
 
 This way agents treat `pnpm dev` / `bun dev` as a simple command that just works. They don't need to know about tuistory internals unless they need to inspect output or restart.
 
+## Passthrough mode (traforo, sigillo)
+
+When tuistory detects it's running inside **traforo** (`TRAFORO_URL` env var) or **sigillo** (`SIGILLO` env var), it skips the daemon and session management entirely. Instead it spawns the command directly with inherited stdio and forwards signals to the child process group.
+
+This means if your dev script is `"dev": "tuistory -- next dev"` and you wrap it with `kimaki tunnel` or `sigillo run`, tuistory becomes a transparent passthrough. The outer tool controls the process lifecycle.
+
+**Practical consequence:** agents that need a background session for a tunneled dev server must wrap the full command with tuistory themselves, since the inner tuistory (from the dev script) will run in passthrough mode.
+
+```bash
+# The inner tuistory (from "pnpm dev") enters passthrough mode because
+# kimaki tunnel sets TRAFORO_URL. So you need an outer tuistory for
+# background session management:
+tuistory -s myapp-dev -- kimaki tunnel -- pnpm dev
+
+# Wait for the tunnel URL to appear
+tuistory -s myapp-dev wait "/tunnel/i" --timeout 30000
+
+# Read the output to find the public URL
+tuistory read -s myapp-dev
+```
+
+Without the outer `tuistory -- ...`, the command would run in the foreground (passthrough mode) and block the agent.
+
+The same applies to sigillo:
+
+```bash
+tuistory -s myapp-dev -- sigillo run -- pnpm dev
+```
+
 ## Key rules
 
 - **Options before `--`, command after.** Everything after `--` is passed verbatim to the child process. `tuistory -s myserver --cols 150 -- node server.js` is correct. `tuistory -- node server.js -s myserver` is wrong.
