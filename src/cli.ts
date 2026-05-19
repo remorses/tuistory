@@ -2163,6 +2163,71 @@ async function runCliClient() {
     process.exit(1)
   }
 
+  // When running inside a process runner like traforo or sigillo, skip the
+  // daemon/session management entirely and just exec the command directly
+  // with inherited stdio. These tools already manage the child process
+  // lifecycle, so adding a tuistory daemon layer is unnecessary complexity.
+  //
+  // Spawns with `detached: true` on POSIX so the shell and all its children
+  // form a new process group. Signals are sent to `-pid` (the whole group)
+  // to avoid orphaning grandchildren (dev servers, background jobs, etc.).
+  const isWrappedByRunner = !!(process.env.TRAFORO_URL || process.env.SIGILLO)
+  if (isLaunchCommand && isWrappedByRunner && launchCommand) {
+    const cwd = inspectCli.options.cwd ?? process.cwd()
+    const env = {
+      ...process.env,
+      ...parseEnvOptions(inspectCli.options.env as string[] | undefined),
+    }
+    const isWindows = os.platform() === 'win32'
+    const child = spawn(
+      isWindows ? 'cmd.exe' : 'sh',
+      isWindows ? ['/c', launchCommand] : ['-c', launchCommand],
+      { stdio: 'inherit', cwd, env, detached: !isWindows },
+    )
+
+    let childExited = false
+
+    // Kill the entire process group on POSIX, or the direct child on Windows.
+    const killChild = (signal: NodeJS.Signals) => {
+      if (!child.pid || childExited) return
+      try {
+        if (isWindows) {
+          child.kill(signal)
+        } else {
+          process.kill(-child.pid, signal)
+        }
+      } catch {
+        // Process already exited
+      }
+    }
+
+    // Forward signals so Ctrl+C, SIGTERM, and terminal hangup propagate.
+    const signals: NodeJS.Signals[] = isWindows
+      ? ['SIGINT', 'SIGTERM']
+      : ['SIGINT', 'SIGTERM', 'SIGHUP']
+
+    const forwardSignal = (signal: NodeJS.Signals) => { killChild(signal) }
+    for (const sig of signals) process.on(sig, forwardSignal)
+
+    const signalExitCode: Partial<Record<string, number>> = {
+      SIGHUP: 129, SIGINT: 130, SIGTERM: 143,
+    }
+
+    const exitCode = await new Promise<number>((resolve) => {
+      child.once('error', (err) => {
+        console.error(pc.red(`Failed to spawn command: ${err.message}`))
+        resolve(1)
+      })
+      child.once('close', (code, signal) => {
+        childExited = true
+        resolve(code ?? (signal ? signalExitCode[signal] ?? 1 : 1))
+      })
+    })
+
+    for (const sig of signals) process.off(sig, forwardSignal)
+    process.exit(exitCode)
+  }
+
   if (inspectCli.matchedCommandName === 'daemon-stop') {
     await runDaemonStopCommand()
     return
