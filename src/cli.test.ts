@@ -199,19 +199,48 @@ describe('CLI basic workflow', () => {
     }
   }, 15000)
 
-  test('launch uses cwd basename + command as default session name', async () => {
+  test('launch resolves relative --cwd from the caller cwd', async () => {
+    const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tuistory-relative-cwd-')))
+    const childCwd = path.join(cwd, 'app')
+    fs.mkdirSync(childCwd)
+
+    try {
+      const launch = await runCli(['launch', 'pwd', '-s', 'relative-cwd-test', '--cwd', 'app'], { cwd })
+      expect(launch.exitCode).toBe(0)
+
+      const output = await runCli(['read', '-s', 'relative-cwd-test', '--all', '--trim'])
+      expect(output.exitCode).toBe(0)
+      expect(output.stdout).toContain(childCwd)
+
+      const sessions = await runCli(['sessions'])
+      expect(sessions.exitCode).toBe(0)
+      expect(sessions.stdout).toContain(childCwd)
+
+      const close = await runCli(['close', '-s', 'relative-cwd-test'])
+      expect(close.exitCode).toBe(0)
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true })
+    }
+  }, 15000)
+
+  test('launch uses cwd basename + hash + command as default session name', async () => {
     const launch = await runCli(['launch', 'printf hello'])
     expect(launch.exitCode).toBe(0)
-    expect(launch.stdout).toBe('Session "tuistory-printf-hello" started')
+    // Name includes a 4-char cwd hash to avoid collisions across directories
+    // with the same basename. Pattern: <basename>-<hash>-<command>
+    const match = launch.stdout.match(/^Session "(.+)" started$/)
+    expect(match).toBeTruthy()
+    const sessionName = match![1]
+    expect(sessionName).toMatch(/^tuistory-[a-f0-9]{4}-printf-hello$/)
 
     const sessions = await runCli(['sessions'])
     expect(sessions.exitCode).toBe(0)
-    expect(sessions.stdout).toContain('tuistory-printf-hello')
+    expect(sessions.stdout).toContain(sessionName)
 
-    const output = await runCli(['read', '-s', 'tuistory-printf-hello', '--all', '--trim'])
+    const output = await runCli(['read', '-s', sessionName, '--all', '--trim'])
     expect(output.stdout).toContain('hello')
 
-    await runCli(['close', '-s', 'tuistory-printf-hello'])
+    await runCli(['close', '-s', sessionName])
   }, 10000)
 
   test('bare command aliases launch', async () => {

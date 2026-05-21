@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
@@ -155,12 +156,19 @@ function parseEnvOptions(env: string[] | undefined): Record<string, string> {
 
 function getDefaultSessionName(command: string, cwd: string): string {
   const base = path.basename(cwd)
-  const raw = `${base}-${command}`
+  // Short hash of the full cwd path to avoid collisions when different
+  // directories share the same basename (e.g. /a/myapp vs /b/myapp).
+  const hash = createHash('sha256').update(cwd).digest('hex').slice(0, 4)
+  const raw = `${base}-${hash}-${command}`
   return raw
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/-{2,}/g, '-')
     .replace(/^-|-$/g, '')
+}
+
+function resolveCwd(cwd: string | undefined, callerCwd: string): string {
+  return cwd ? path.resolve(callerCwd, cwd) : callerCwd
 }
 
 function getLaunchCommandFromArgv(argv: string[]): string | null {
@@ -250,7 +258,7 @@ function createCliWithActions(
 
     The session runs inside a background daemon so it persists
     across multiple tuistory invocations. Use \`-s\` to name
-    sessions; defaults to \`<cwd-basename>-<command>\` in kebab-case.
+    sessions; defaults to \`<cwd-basename>-<cwd-hash>-<command>\` in kebab-case.
 
     In a TTY (interactive terminal), launch auto-attaches so you
     see the session output live. Agents and non-TTY environments
@@ -284,7 +292,8 @@ function createCliWithActions(
       return
     }
 
-    const sessionName = options.session ?? getDefaultSessionName(launchCommand, options.cwd ?? runtime.process.cwd)
+    const cwd = resolveCwd(options.cwd, runtime.process.cwd)
+    const sessionName = options.session ?? getDefaultSessionName(launchCommand, cwd)
 
     // Evict dead sessions older than 1 day to prevent unbounded memory growth.
     // Runs opportunistically on each launch instead of a periodic timer.
@@ -352,7 +361,7 @@ function createCliWithActions(
       args: isWindows ? ['/c', launchCommand] : ['-c', launchCommand],
       cols: options.cols,
       rows: options.rows,
-      cwd: options.cwd ?? runtime.process.cwd,
+      cwd,
       env,
       label: launchCommand,
     }))
@@ -388,7 +397,7 @@ function createCliWithActions(
         `Session "${sessionName}" is now running in the background.`,
         ``,
         `  command: ${launchCommand}`,
-        `  cwd:     ${options.cwd ?? runtime.process.cwd}`,
+        `  cwd:     ${cwd}`,
         `  cols:    ${options.cols}`,
         `  rows:    ${options.rows}`,
         ``,
@@ -2128,7 +2137,7 @@ async function runDaemonStopCommand() {
 async function runCliClient() {
   const inspectCtx: CommandResult = { stdout: '', stderr: '', exitCode: 0 }
   const inspectCli = createCliWithActions(inspectCtx, new Map(), dummyLogger)
-  inspectCli.parse(process.argv, { run: false })
+  await inspectCli.parse(process.argv, { run: false })
 
   // Help/version are handled locally by goke during parse().
   if (inspectCli.options.help || inspectCli.options.version) {
@@ -2160,7 +2169,7 @@ async function runCliClient() {
   // to avoid orphaning grandchildren (dev servers, background jobs, etc.).
   const isWrappedByRunner = !!(process.env.TRAFORO_URL || process.env.SIGILLO)
   if (isLaunchCommand && isWrappedByRunner && launchCommand) {
-    const cwd = inspectCli.options.cwd ?? process.cwd()
+    const cwd = resolveCwd(inspectCli.options.cwd, process.cwd())
     const env = {
       ...process.env,
       ...parseEnvOptions(inspectCli.options.env as string[] | undefined),
@@ -2286,7 +2295,7 @@ async function runCliClient() {
     const isBackground = inspectCli.options.background === true
     const shouldAttach = process.stdout.isTTY && !isAgent && !isBackground
     if (shouldAttach) {
-      const defaultNameCwd = inspectCli.options.cwd ?? process.cwd()
+      const defaultNameCwd = resolveCwd(inspectCli.options.cwd, process.cwd())
       const sessionName = inspectCli.options.session ?? (launchCommand ? getDefaultSessionName(launchCommand, defaultNameCwd) : undefined)
       await runAttachCommand({ session: sessionName })
       process.exit(0)
