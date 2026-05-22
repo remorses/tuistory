@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.8.0
+
+1. **Passthrough mode inside process runners** — when tuistory detects it's running inside `traforo` or `sigillo` (via `TRAFORO_URL` or `SIGILLO` env vars), it skips daemon/session management entirely and spawns the command directly with inherited stdio. This avoids unnecessary complexity when these tools already manage the child process lifecycle:
+
+   ```bash
+   # Inside a traforo tunnel, tuistory just execs the command directly
+   tuistory -s dev -- kimaki tunnel -- pnpm dev
+   ```
+
+   The inner tuistory sees `TRAFORO_URL` and passes through transparently. Signals propagate correctly to the entire process group.
+
+2. **Fixed relative `--cwd` resolution** — passing a relative path to `--cwd` now resolves it against the caller's working directory instead of using it as-is. Previously, `--cwd app` would fail or resolve incorrectly when the daemon's cwd differed from the caller's.
+
+3. **Default session names include a cwd hash** — session names now use the pattern `<basename>-<hash>-<command>` instead of `<basename>-<command>`. The 4-character hash of the full cwd path prevents collisions when different directories share the same basename (e.g. `/a/myapp` and `/b/myapp`).
+
 ## 0.7.0
 
 1. **New `--background` flag for `launch`** — skip auto-attach in TTY mode and get a help block showing all the commands to interact with the session:
