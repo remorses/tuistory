@@ -1489,21 +1489,63 @@ function compareVersions(v1: string, v2: string): number {
   return 0
 }
 
+// A daemon is usable if it answers /version with a version >= our own. We never
+// downgrade or kill a NEWER daemon (it can serve an older client fine), but an
+// older daemon must be restarted so the client's code is the one running.
+function isUsableVersion(version: string): boolean {
+  return compareVersions(version, VERSION) >= 0
+}
+
+// The observable state of the relay port, from the client's point of view.
+// This is the single classification both ensureRelayRunning and daemon-stop
+// branch on, so the "orphaned/wedged daemon" case is no longer special — it is
+// just `occupied-unresponsive`, an unhealthy owner of the port.
+type RelayStatus =
+  | { kind: 'healthy'; version: string }
+  | { kind: 'no-listener' }
+  | { kind: 'occupied-unresponsive' }
+
+// Classify the relay port: does a healthy daemon answer HTTP, is the port free,
+// or is something holding the port without answering /version (a wedged or
+// orphaned daemon, or an unrelated process squatting on the port)?
+async function probeRelay(): Promise<RelayStatus> {
+  const version = await getRelayVersion()
+  if (version !== null) {
+    return { kind: 'healthy', version }
+  }
+  if (await isPortInUse(RELAY_PORT)) {
+    return { kind: 'occupied-unresponsive' }
+  }
+  return { kind: 'no-listener' }
+}
+
 // Kill relay server using PID file (SIGTERM for graceful shutdown).
-// Escalates to SIGKILL if SIGTERM doesn't work, then falls back to kill-port-process.
-async function killRelay(): Promise<void> {
-  const raw = errore.try(() => fs.readFileSync(PID_FILE, 'utf-8'))
-  const pid = raw instanceof Error ? null : (() => {
-    const n = Number(raw.trim())
-    return isNaN(n) || n <= 0 ? null : n
-  })()
+// Escalates to SIGKILL if SIGTERM doesn't work, then ALWAYS kills whatever
+// still holds the relay port.
+//
+// Why kill by port unconditionally (not just as a fallback): the PID file
+// only records the daemon that won the race to bind the port. A daemon that
+// lost the bind race, or one whose PID file got clobbered, can still hold the
+// port as an orphan (PPID 1) that the PID-based kill never sees. Without the
+// unconditional port sweep, `tuistory daemon-stop` would print "Daemon
+// stopped" while a zombie daemon kept the port (and its child dev servers)
+// alive — which is exactly the orphan that caused EADDRINUSE on the next
+// launch. So we treat the port itself as the source of truth for "is a
+// daemon still here".
+// Returns true if the relay port is free afterwards, false if something still
+// holds it (caller should treat that as a fatal failure before spawning).
+async function killRelay(): Promise<boolean> {
+  const pid = readPidFile()
 
-  const processExited = pid !== null
-    ? await killProcessByPid(pid)
-    : false
+  // First, gracefully stop the daemon recorded in the PID file (if any), so it
+  // closes its sessions and child processes before we resort to killing.
+  if (pid !== null) {
+    await killProcessByPid(pid)
+  }
 
-  // Fallback: kill by port if PID-based kill didn't work or PID file was missing
-  if (!processExited) {
+  // Then ensure the port is actually free. If anything still holds it (the
+  // recorded daemon refused to die, or an unrecorded orphan owns it), kill it.
+  if (await isPortInUse(RELAY_PORT)) {
     const portKill = await errore.tryAsync({
       try: async () => {
         const { killPortProcess } = await import('kill-port-process')
@@ -1512,12 +1554,35 @@ async function killRelay(): Promise<void> {
       catch: (e) => new PidFileError({ path: String(RELAY_PORT), reason: 'port-based kill failed', cause: e }),
     })
     if (portKill instanceof Error) {
-      // Both PID and port-based kill failed — daemon may already be dead
+      // kill-port-process failed — give the OS a beat before re-checking.
+      await new Promise((r) => setTimeout(r, 200))
     }
   }
 
-  // Clean up PID file
+  // Wait for the OS to actually release the socket so a subsequent spawn
+  // doesn't immediately hit EADDRINUSE again.
+  const freed = await waitForPortFree(RELAY_PORT, 5000)
+
+  // Clean up the PID file (it points at a now-dead daemon).
   errore.try(() => fs.unlinkSync(PID_FILE))
+
+  return freed
+}
+
+// Read the PID recorded in the PID file, or null if missing/invalid.
+function readPidFile(): number | null {
+  const raw = errore.try(() => fs.readFileSync(PID_FILE, 'utf-8'))
+  if (raw instanceof Error) return null
+  const n = Number(raw.trim())
+  return isNaN(n) || n <= 0 ? null : n
+}
+
+// Remove the PID file only if it still records THIS process. Prevents a dying
+// daemon from deleting the PID file of a newer daemon that already took over.
+function unlinkPidFileIfOwned(): void {
+  if (readPidFile() === process.pid) {
+    errore.try(() => fs.unlinkSync(PID_FILE))
+  }
 }
 
 // Send SIGTERM to a PID, wait up to 3s, escalate to SIGKILL if needed.
@@ -1674,7 +1739,7 @@ export function checkLocalOnly(req: Request, port: number): string | null {
 // Start relay server (daemon mode)
 async function startRelayServer() {
   const { Hono } = await import('hono')
-  const { serve } = await import('@hono/node-server')
+  const { createAdaptorServer } = await import('@hono/node-server')
   const { createNodeWebSocket } = await import('@hono/node-ws')
 
   const logger = createFileLogger()
@@ -1849,25 +1914,51 @@ async function startRelayServer() {
     return c.json(ctx)
   })
 
-  const server = serve({
+  // Build the HTTP server but DON'T bind yet — we attach 'error'/'listening'
+  // handlers first, then call listen() ourselves.
+  //
+  // CRITICAL: @hono/node-server's serve() helper calls server.listen()
+  // internally without an 'error' handler. If the port is already in use (a
+  // daemon raced us to it, or an orphan still holds it), Node emits an 'error'
+  // event with no listener and re-throws it as an *unhandled* error, crashing
+  // the process with a confusing "Emitted 'error' event on Server instance"
+  // stack. uncaughtException does NOT catch unhandled 'error' events. Using
+  // createAdaptorServer() lets us register the handler BEFORE binding.
+  const server = createAdaptorServer({
     fetch: app.fetch,
-    port: RELAY_PORT,
     hostname: '127.0.0.1',
   })
 
-  // Inject WebSocket support into the HTTP server
+  // A losing daemon (lost the bind race) exits 0 — EADDRINUSE is the desired
+  // end state, the client will connect to the daemon that won. Any OTHER listen
+  // error is a real failure, so exit 1. We never write the PID file in this
+  // path, so a failed-to-bind daemon can't clobber the winner's PID file.
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    const isAddrInUse = err.code === 'EADDRINUSE'
+    const msg = isAddrInUse
+      ? `Port ${RELAY_PORT} already in use; another daemon owns it. Exiting.`
+      : `Relay server listen error: ${err.stack || err.message}`
+    // Flush the log before exiting — process.exit() would otherwise drop the
+    // pending async write, hiding the reason this daemon gave up.
+    void logger.error(msg).finally(() => process.exit(isAddrInUse ? 0 : 1))
+  })
+
+  server.on('listening', () => {
+    // Only the daemon that successfully bound the port writes the PID file, so
+    // killRelay() always targets the real listener.
+    ensureTuistoryDir()
+    const pidWrite = errore.try(() => fs.writeFileSync(PID_FILE, String(process.pid)))
+    if (pidWrite instanceof Error) {
+      void logger.error(`Failed to write PID file: ${pidWrite.message}`)
+    }
+    void logger.log(`Relay server started on port ${RELAY_PORT}`)
+    void logger.log(`Version: ${VERSION}`)
+    void logger.log(`PID: ${process.pid}`)
+  })
+
+  // Inject WebSocket support, then bind. Handlers above are already attached.
   injectWebSocket(server)
-
-  // Write PID file so killRelay() can send SIGTERM instead of kill-by-port
-  ensureTuistoryDir()
-  const pidWrite = errore.try(() => fs.writeFileSync(PID_FILE, String(process.pid)))
-  if (pidWrite instanceof Error) {
-    void logger.error(`Failed to write PID file: ${pidWrite.message}`)
-  }
-
-  await logger.log(`Relay server started on port ${RELAY_PORT}`)
-  await logger.log(`Version: ${VERSION}`)
-  await logger.log(`PID: ${process.pid}`)
+  server.listen(RELAY_PORT, '127.0.0.1')
 
   const gracefulShutdown = async (signal: string) => {
     await logger.log(`Relay server shutting down (${signal})`)
@@ -1877,8 +1968,9 @@ async function startRelayServer() {
       await logger.log(`Session "${name}" closed on shutdown`)
     }
     sessions.clear()
-    const unlinked = errore.try(() => fs.unlinkSync(PID_FILE))
-    if (unlinked instanceof Error) await logger.error(`Failed to remove PID file: ${unlinked.message}`)
+    // Only remove the PID file if it still records us — never delete a newer
+    // daemon's PID file if one already took over the port.
+    unlinkPidFileIfOwned()
     // Close the HTTP server first so no new requests are accepted,
     // then flush the logger, then exit.
     await new Promise<void>((resolve) => server.close(() => resolve()))
@@ -1946,66 +2038,64 @@ function spawnRelayServer(): void {
   serverProcess.unref()
 }
 
-// Ensure the relay daemon is running and at the correct version.
-// Shared by both normal CLI forwarding and the attach command.
-async function ensureRelayRunning(): Promise<void> {
-  const serverVersion = await getRelayVersion()
+// Print a relay error with log tail and exit. Never returns.
+function failRelay(err: Error): never {
+  console.error(pc.red(err.message))
+  printRelayLogTail()
+  console.error(pc.red(`Check logs at: ${LOG_FILE_PATH}`))
+  process.exit(1)
+}
 
-  if (serverVersion === null) {
-    spawnRelayServer()
-    const started = await waitForRelay()
-    if (!started) {
-      const err = new RelayStartError({ action: 'start', reason: `timed out waiting for relay on port ${RELAY_PORT}` })
-      console.error(pc.red(err.message))
-      printRelayLogTail()
-      console.error(pc.red(`Check logs at: ${LOG_FILE_PATH}`))
-      process.exit(1)
+// Ensure a healthy daemon of at least this client's version owns the port.
+//
+// The mental model: the CLIENT owns all lifecycle decisions; the daemon only
+// serves requests and self-exits cleanly when it can't bind. There is exactly
+// ONE transition that mutates the port (kill old + spawn new), and it runs
+// under the restart lock so two concurrent clients can't kill each other's
+// daemons.
+//
+// All "the existing daemon is not what we want" cases — stale version, wedged
+// daemon that won't answer HTTP, orphan holding the port — collapse into the
+// same path: under the lock, kill whatever unhealthy thing owns the port, then
+// spawn one replacement.
+async function ensureRelayRunning(): Promise<void> {
+  // Fast path: a healthy, new-enough daemon is already serving.
+  const status = await probeRelay()
+  if (status.kind === 'healthy' && isUsableVersion(status.version)) return
+
+  // Only one client performs the kill+spawn transition at a time.
+  if (!acquireRestartLock()) {
+    // Another client is already fixing the daemon; just wait for it.
+    if (await waitForRelay(15000, VERSION)) return
+    failRelay(new RelayStartError({ action: 'start', reason: `timed out waiting for another client to start relay v${VERSION}` }))
+  }
+
+  try {
+    // Re-probe under the lock — the previous lock holder may have already
+    // started a good daemon while we were blocked acquiring the lock.
+    const current = await probeRelay()
+    if (current.kind === 'healthy' && isUsableVersion(current.version)) return
+
+    // Tear down any unhealthy owner of the port. A newer healthy daemon would
+    // have returned above, so reaching here with 'healthy' means it's stale.
+    if (current.kind === 'healthy') {
+      console.error(pc.yellow(`Relay server version mismatch (server: ${current.version}, client: ${VERSION}), restarting...`))
+    } else if (current.kind === 'occupied-unresponsive') {
+      console.error(pc.yellow(`Relay port ${RELAY_PORT} is occupied but not answering; replacing wedged daemon...`))
     }
-  } else if (serverVersion !== VERSION) {
-    const comparison = compareVersions(serverVersion, VERSION)
-    if (comparison < 0) {
-      const lockAcquired = acquireRestartLock()
-      if (lockAcquired) {
-        try {
-          const currentVersion = await getRelayVersion()
-          if (currentVersion !== null && compareVersions(currentVersion, VERSION) >= 0) {
-            // Already restarted by another client
-          } else {
-            console.error(pc.yellow(`Relay server version mismatch (server: ${serverVersion}, client: ${VERSION}), restarting...`))
-            await killRelay()
-            // Wait for the port to be free before spawning the new daemon.
-            // The previous listener may not be fully closed yet.
-            const portFree = await waitForPortFree(RELAY_PORT, 5000)
-            if (!portFree) {
-              const err = new RelayStartError({ action: 'restart', reason: `port ${RELAY_PORT} still in use after killing old daemon` })
-              console.error(pc.red(err.message))
-              printRelayLogTail()
-              process.exit(1)
-            }
-            spawnRelayServer()
-            const started = await waitForRelay(5000, VERSION)
-            if (!started) {
-              const err = new RelayStartError({ action: 'restart', reason: `timed out waiting for relay v${VERSION} on port ${RELAY_PORT}` })
-              console.error(pc.red(err.message))
-              printRelayLogTail()
-              console.error(pc.red(`Check logs at: ${LOG_FILE_PATH}`))
-              process.exit(1)
-            }
-          }
-        } finally {
-          releaseRestartLock()
-        }
-      } else {
-        const started = await waitForRelay(15000, VERSION)
-        if (!started) {
-          const err = new RelayStartError({ action: 'restart', reason: `timed out waiting for relay v${VERSION} after another client restarted it` })
-          console.error(pc.red(err.message))
-          printRelayLogTail()
-          console.error(pc.red(`Check logs at: ${LOG_FILE_PATH}`))
-          process.exit(1)
-        }
+    if (current.kind !== 'no-listener') {
+      const portFreed = await killRelay()
+      if (!portFreed) {
+        failRelay(new RelayStartError({ action: 'restart', reason: `port ${RELAY_PORT} still in use after killing old daemon` }))
       }
     }
+
+    spawnRelayServer()
+    if (!await waitForRelay(5000, VERSION)) {
+      failRelay(new RelayStartError({ action: 'start', reason: `timed out waiting for relay v${VERSION} on port ${RELAY_PORT}` }))
+    }
+  } finally {
+    releaseRestartLock()
   }
 }
 
@@ -2123,13 +2213,19 @@ async function runAttachCommand(options: { session?: string }) {
 }
 
 async function runDaemonStopCommand() {
-  const serverVersion = await getRelayVersion()
-  if (serverVersion === null) {
+  // The port is the source of truth, not /version: a wedged or orphaned daemon
+  // holds the port without answering HTTP, and it must still be stopped.
+  const status = await probeRelay()
+  if (status.kind === 'no-listener') {
     console.log('No daemon running')
     return
   }
 
-  await killRelay()
+  const portFreed = await killRelay()
+  if (!portFreed) {
+    console.error(pc.red(`Failed to stop daemon: port ${RELAY_PORT} is still in use`))
+    process.exit(1)
+  }
   console.log('Daemon stopped')
 }
 

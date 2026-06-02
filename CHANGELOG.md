@@ -9,6 +9,15 @@
    tuistory -s dev restart       # no more orphaned vite holding the port
    ```
 
+2. **Relay daemon lifecycle is now robust against wedged and orphaned daemons** — the client used to trust the `/version` HTTP probe to decide whether a daemon existed. A daemon that held the port but didn't answer HTTP (wedged event loop, mid-startup, or an orphan with no PID file) was mistaken for "no daemon", so the client spawned a second daemon that crashed on bind with `EADDRINUSE`. The port is now the source of truth: `ensureRelayRunning` classifies the port as healthy / no-listener / occupied-unresponsive and replaces any unhealthy owner under the restart lock, and `daemon-stop` stops whatever holds the port instead of giving up when `/version` is silent.
+
+   ```bash
+   tuistory -s dev -- kimaki tunnel -- pnpm dev   # no EADDRINUSE if an old daemon is wedged
+   tuistory daemon-stop                            # reliably frees the port, even for orphans
+   ```
+
+   The daemon also binds with its `error`/`listening` handlers attached first (via `createAdaptorServer()`), so a daemon that loses a bind race exits cleanly (code 0) instead of dumping an unhandled `EADDRINUSE` crash stack. The PID file is written only after a successful bind and removed only by its owner, so a failed-to-bind daemon can never clobber the real listener's PID file.
+
 ## 0.8.0
 
 1. **Passthrough mode inside process runners** — when tuistory detects it's running inside `traforo` or `sigillo` (via `TRAFORO_URL` or `SIGILLO` env vars), it skips daemon/session management entirely and spawns the command directly with inherited stdio. This avoids unnecessary complexity when these tools already manage the child process lifecycle:

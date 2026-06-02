@@ -26,6 +26,31 @@ async function runCli(args: string[], options: { cwd?: string; env?: Record<stri
   return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode }
 }
 
+// Spawn a SEPARATE process that binds the given port and accepts connections
+// but never replies (simulating a wedged/orphaned daemon). Must be a distinct
+// process so killRelay()'s port-based SIGKILL targets it, not the test runner.
+function spawnPortBlocker(port: number) {
+  const code = `require('net').createServer(()=>{}).listen(${port},'127.0.0.1',()=>process.stdout.write('BOUND\\n'))`
+  return spawn(['node', '-e', code], { stdout: 'pipe', stderr: 'pipe' })
+}
+
+// Poll until a TCP connect to the port succeeds (something is listening).
+async function waitForPortBound(port: number, timeoutMs = 5000): Promise<void> {
+  const net = await import('node:net')
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    const bound = await new Promise<boolean>((resolve) => {
+      const sock = net.connect(port, '127.0.0.1')
+      sock.once('connect', () => { sock.destroy(); resolve(true) })
+      sock.once('error', () => { resolve(false) })
+      setTimeout(() => { sock.destroy(); resolve(false) }, 200)
+    })
+    if (bound) return
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  throw new Error(`port ${port} never became bound`)
+}
+
 // Kill the test daemon so every test run starts a fresh one with the latest code.
 //
 // The relay daemon is a long-lived background process; if we leave a previous
@@ -505,6 +530,131 @@ describe('CLI daemon control', () => {
     expect(jsonSessions.stdout).toBe('[]')
     expect(JSON.parse(jsonSessions.stdout)).toEqual([])
   }, 10000)
+
+  // Regression: an orphaned daemon (one whose PID file was lost or never
+  // written, e.g. a daemon that lost the bind race) used to survive
+  // `daemon-stop` because killRelay only killed by port as a fallback when
+  // the PID-based kill "failed". With an empty PID file the port holder was
+  // never reliably killed, leaving a zombie daemon on the port that then
+  // caused EADDRINUSE on the next launch. daemon-stop must free the port even
+  // when the PID file is missing.
+  test('daemon-stop frees the port when PID file is missing (orphan daemon)', async () => {
+    const port = Number(process.env.TUISTORY_PORT)
+
+    // Start a daemon by launching a session.
+    const launch = await runCli(['launch', 'sleep 60', '-s', 'orphan-test', '--no-wait'])
+    expect(launch.exitCode).toBe(0)
+
+    // Simulate the orphan condition: remove the PID file so daemon-stop has no
+    // recorded PID and must rely on the port sweep to find and kill the daemon.
+    try { fs.unlinkSync(TEST_PID_FILE) } catch {}
+
+    const stop = await runCli(['daemon-stop'])
+    expect(stop.exitCode).toBe(0)
+
+    // The port must actually be free now — not just a "Daemon stopped" message.
+    const net = await import('node:net')
+    const portFree = await new Promise<boolean>((resolve) => {
+      const sock = net.connect(port, '127.0.0.1')
+      sock.once('connect', () => { sock.destroy(); resolve(false) })
+      sock.once('error', () => { resolve(true) })
+      setTimeout(() => { sock.destroy(); resolve(true) }, 500)
+    })
+    expect(portFree).toBe(true)
+  }, 15000)
+
+  // Regression: spawning a second daemon while one already owns the port used
+  // to crash with an unhandled 'error' EADDRINUSE event (@hono/node-server's
+  // serve() has no listen error handler). The losing daemon must now exit
+  // cleanly without dumping a Node crash stack, and the existing daemon must
+  // keep working.
+  test('second daemon spawn does not crash on EADDRINUSE', async () => {
+    // Ensure a daemon is running.
+    const first = await runCli(['sessions'])
+    expect(first.exitCode).toBe(0)
+
+    const port = Number(process.env.TUISTORY_PORT)
+    const isTs = CLI_PATH.endsWith('.ts')
+    const execPath = isTs ? 'bun' : process.execPath
+
+    // Spawn a raw relay daemon directly (bypassing the client's version check)
+    // so it races for the already-bound port. It must exit cleanly.
+    const orphan = spawn([execPath, CLI_PATH], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env, TUISTORY_RELAY: '1', TUISTORY_PORT: String(port) },
+    })
+    const exitCode = await orphan.exited
+    const stderr = await new Response(orphan.stderr).text()
+
+    // Losing daemon exits cleanly (0), not via an unhandled-error crash (1),
+    // and never prints the telltale EADDRINUSE crash stack to stderr.
+    expect(exitCode).toBe(0)
+    expect(stderr).not.toContain('EADDRINUSE')
+    expect(stderr).not.toContain("Emitted 'error' event")
+
+    // The original daemon must still be alive and serving.
+    const after = await runCli(['sessions'])
+    expect(after.exitCode).toBe(0)
+  }, 15000)
+
+  // Regression for the DEEPER bug: a process can hold the relay port without
+  // answering HTTP /version (a wedged daemon, or an orphan whose event loop is
+  // blocked). The client used to treat "no /version answer" as "no daemon" and
+  // spawn a new one that then hit EADDRINUSE. ensureRelayRunning must now
+  // detect the occupied-but-unresponsive port, kill the squatter, and start a
+  // healthy daemon — so a normal command succeeds.
+  test('ensureRelayRunning replaces an unresponsive port holder', async () => {
+    await killTestDaemon()
+    const port = Number(process.env.TUISTORY_PORT)
+
+    // A SEPARATE process that holds the port but never answers HTTP. It must be
+    // a child process (not in-process), because killRelay() resolves the PID
+    // listening on the port and SIGKILLs it — an in-process blocker would kill
+    // the test runner itself.
+    const blocker = spawnPortBlocker(port)
+    await waitForPortBound(port)
+
+    try {
+      // A normal command must recover: kill the squatter, spawn a real daemon.
+      const result = await runCli(['sessions'])
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain('No active sessions')
+    } finally {
+      try { blocker.kill('SIGKILL') } catch {}
+    }
+  }, 20000)
+
+  // daemon-stop must also stop an unresponsive port holder, not just bail with
+  // "No daemon running" because /version didn't answer.
+  test('daemon-stop kills an unresponsive port holder', async () => {
+    await killTestDaemon()
+    const port = Number(process.env.TUISTORY_PORT)
+    const net = await import('node:net')
+
+    const blocker = spawnPortBlocker(port)
+    await waitForPortBound(port)
+    // Remove any stale PID file so the only way to stop it is the port sweep.
+    try { fs.unlinkSync(TEST_PID_FILE) } catch {}
+
+    try {
+      const stop = await runCli(['daemon-stop'])
+      // It must not claim "No daemon running" — the port is occupied.
+      expect(stop.stdout).not.toContain('No daemon running')
+
+      // The port must be free afterwards (the squatter was killed): a fresh
+      // bind must succeed.
+      const canRebind = await new Promise<boolean>((resolve) => {
+        const probe = net.createServer()
+        probe.once('error', () => resolve(false))
+        probe.once('listening', () => probe.close(() => resolve(true)))
+        probe.listen(port, '127.0.0.1')
+      })
+      expect(canRebind).toBe(true)
+    } finally {
+      try { blocker.kill('SIGKILL') } catch {}
+    }
+  }, 20000)
 })
 
 describe('CLI regex patterns', () => {
