@@ -1,4 +1,5 @@
 import { spawn as zigSpawn } from 'zigpty'
+import { killProcessGroup } from './kill-process-group.js'
 
 export interface IPty {
   write(data: string): void
@@ -57,7 +58,12 @@ export function spawn(command: string, args: string[], options: SpawnOptions): I
       pty.resize(cols, rows)
     },
     kill() {
-      pty.kill()
+      // Kill the whole foreground process group, not just the PTY leader.
+      // zigpty.kill() only signals the leader pid (e.g. a `sh -c` wrapper),
+      // which leaves grandchildren like `vite`/`pnpm` orphaned and holding
+      // their ports. The PTY child is a session/group leader (pgid == pid),
+      // so signaling -pid reaches the entire tree. Falls back to the leader.
+      killProcessGroup(pty.pid, () => pty.kill())
     },
     onData(callback) {
       dataCallback = callback

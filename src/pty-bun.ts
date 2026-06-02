@@ -1,3 +1,5 @@
+import { killProcessGroup } from './kill-process-group.js'
+
 export interface IPty {
   write(data: string): void
   resize(cols: number, rows: number): void
@@ -80,7 +82,10 @@ export function spawn(command: string, args: string[], options: SpawnOptions): I
       terminal.resize(cols, rows)
     },
     kill() {
-      subprocess.kill()
+      // Kill the whole foreground process group, not just the PTY leader, so
+      // grandchildren (e.g. `vite` behind a `sh -c` wrapper) don't get
+      // orphaned and keep holding their ports. Falls back to the leader.
+      killProcessGroup(subprocess.pid, () => subprocess.kill())
     },
     onData(callback) {
       dataCallback = callback

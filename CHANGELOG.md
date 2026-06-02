@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.1
+
+1. **Closing/restarting a session now kills the whole process group, not just the PTY leader** — previously `close` and `restart` only signaled the leader process (e.g. the `sh -c` wrapper). A grandchild dev server like `vite` or `pnpm` that traps `SIGHUP`/`SIGTERM` (or detaches from the controlling terminal) survived as an orphan and kept holding its port, causing `EADDRINUSE` on the next launch. tuistory now signals the entire foreground process group (`SIGTERM`, escalating to `SIGKILL`), so wrapped commands like `tuistory -- kimaki tunnel -- pnpm dev` tear down cleanly:
+
+   ```bash
+   tuistory -s dev -- pnpm dev   # vite grandchild
+   tuistory -s dev restart       # no more orphaned vite holding the port
+   ```
+
 ## 0.8.0
 
 1. **Passthrough mode inside process runners** — when tuistory detects it's running inside `traforo` or `sigillo` (via `TRAFORO_URL` or `SIGILLO` env vars), it skips daemon/session management entirely and spawns the command directly with inherited stdio. This avoids unnecessary complexity when these tools already manage the child process lifecycle:
