@@ -214,15 +214,10 @@ describe('CLI basic workflow', () => {
     await runCli(['close', '-s', 'tuistory-printf-hello'])
   }, 10000)
 
-  test('bare command aliases launch', async () => {
-    const launch = await runCli(['printf hello', '-s', 'default-launch'])
-    expect(launch.exitCode).toBe(0)
-    expect(launch.stdout).toBe('Session "default-launch" started')
-
-    const output = await runCli(['read', '-s', 'default-launch', '--all', '--trim'])
-    expect(output.stdout).toContain('hello')
-
-    await runCli(['close', '-s', 'default-launch'])
+  test('bare positional arg is rejected (must use launch or --)', async () => {
+    const result = await runCli(['printf hello', '-s', 'default-launch'])
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toContain('Unknown command')
   }, 10000)
 
   test('launch accepts command after --', async () => {

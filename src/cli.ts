@@ -163,9 +163,13 @@ function getDefaultSessionName(command: string, cwd: string): string {
     .replace(/^-|-$/g, '')
 }
 
+// Extract the command string from the explicit `launch` subcommand's positional arg.
+// Returns null when `launch` is not present — bare positional args are never treated
+// as launch commands (use `--` instead).
 function getLaunchCommandFromArgv(argv: string[]): string | null {
   const launchIndex = argv.indexOf('launch')
-  const commandArgs = launchIndex === -1 ? argv.slice(2) : argv.slice(launchIndex + 1)
+  if (launchIndex === -1) return null
+  const commandArgs = argv.slice(launchIndex + 1)
 
   for (const arg of commandArgs) {
     if (arg === '--') return null
@@ -270,7 +274,7 @@ function createCliWithActions(
     .option('--attach', z.boolean().optional().meta({ deprecated: true, description: 'Deprecated: attach is now automatic in TTY mode' }))
     .option('--background', 'Run in background without attaching (shows session info and how to interact)')
     .option('--no-wait', "Don't wait for initial data")
-    .option('--timeout <ms>', z.number().default(5000).describe('Wait timeout in milliseconds'))
+    .option('--timeout <ms>', z.number().default(10000).describe('Wait timeout in milliseconds'))
 
   const launchAction = async ({ command, options, runtime }: {
     command: string | null | undefined
@@ -279,7 +283,7 @@ function createCliWithActions(
   }) => {
     const launchCommand = command ?? (options['--'].length > 0 ? options['--'].join(' ') : null)
     if (!launchCommand) {
-      ctx.stderr = 'Error: missing command. Pass one as `tuistory launch "cmd"` or `tuistory launch -- cmd`.'
+      ctx.stderr = 'Error: missing command. Use `tuistory -- cmd` or `tuistory launch "cmd"`.'
       ctx.exitCode = 1
       return
     }
@@ -1421,9 +1425,10 @@ function createCliWithActions(
       ctx.stdout = 'attach command must be run client-side, not through relay'
     })
 
-  addLaunchOptions(cli.command('[command]', launchDescription))
-    .hidden()
-    .action((command, options, runtime) => launchAction({ command, options, runtime }))
+  // Root command (no subcommand name) — only accepts `--` passthrough.
+  // `tuistory -- echo hello` works; `tuistory randomarg` does NOT.
+  addLaunchOptions(cli.command('', launchDescription))
+    .action((options, runtime) => launchAction({ command: null, options, runtime }))
 
   // Global examples showing the full workflow pattern
   cli.example(dedent`
@@ -2138,11 +2143,13 @@ async function runCliClient() {
   const passthroughCommand = Array.isArray(inspectCli.options['--']) && inspectCli.options['--'].length > 0
     ? inspectCli.options['--'].join(' ')
     : null
-  const launchCommand = typeof inspectCli.args[0] === 'string'
+  // Only explicit `launch <cmd>` positional or `--` passthrough count as launch commands.
+  // Bare positional args like `tuistory randomarg` are NOT launch commands.
+  const launchCommand = inspectCli.matchedCommandName === 'launch' && typeof inspectCli.args[0] === 'string'
     ? inspectCli.args[0]
     : passthroughCommand ?? getLaunchCommandFromArgv(process.argv)
   const isLaunchCommand = inspectCli.matchedCommandName === 'launch'
-    || (inspectCli.matchedCommandName === undefined && launchCommand !== null)
+    || (inspectCli.matchedCommandName === undefined && passthroughCommand !== null)
 
   // When running inside a process runner like traforo or sigillo, skip the
   // daemon/session management entirely and just exec the command directly
