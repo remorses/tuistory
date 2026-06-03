@@ -90,7 +90,7 @@ export function spawn(command: string, args: string[], options: SpawnOptions): I
       try {
         process.kill(-subprocess.pid, sig)
       } catch {
-        try { subprocess.kill() } catch {}
+        try { subprocess.kill(sig) } catch {}
       }
     },
     onData(callback) {

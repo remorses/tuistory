@@ -287,10 +287,15 @@ export class Session {
     // pending waiters so they don't hang forever. The session can still be
     // read (snapshot) but writes will fail with a clear error.
     this.pty.onExit((info) => {
-      if (this.closed) return
+      // Always mark dead and record exit info, even if close() already ran.
+      // Without this, close() sets `closed = true` before killing, and the
+      // early return would prevent `dead` from flipping — causing the SIGKILL
+      // timer in close() to fire unnecessarily.
       this.dead = true
       this.exitInfo = info
       this.exitedAt = Date.now()
+
+      if (this.closed) return
       this.drainResolvers()
       // Notify external listeners (e.g. the daemon for logging/cleanup)
       const listeners = this.exitListeners.splice(0)

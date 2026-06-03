@@ -274,7 +274,7 @@ function createCliWithActions(
     .option('--attach', z.boolean().optional().meta({ deprecated: true, description: 'Deprecated: attach is now automatic in TTY mode' }))
     .option('--background', 'Run in background without attaching (shows session info and how to interact)')
     .option('--no-wait', "Don't wait for initial data")
-    .option('--timeout <ms>', z.number().default(10000).describe('Wait timeout in milliseconds'))
+    .option('--timeout <ms>', z.number().default(5000).describe('Wait timeout in milliseconds'))
 
   const launchAction = async ({ command, options, runtime }: {
     command: string | null | undefined
