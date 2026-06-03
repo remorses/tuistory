@@ -1,7 +1,8 @@
 export interface IPty {
+  pid: number
   write(data: string): void
   resize(cols: number, rows: number): void
-  kill(): void
+  kill(signal?: string): void
   onData(callback: (data: string) => void): void
   onExit(callback: (info: { exitCode: number; signal: number }) => void): void
 }
@@ -73,14 +74,24 @@ export function spawn(command: string, args: string[], options: SpawnOptions): I
   const terminal = subprocess.terminal!
 
   return {
+    pid: subprocess.pid,
     write(data) {
       terminal.write(data)
     },
     resize(cols, rows) {
       terminal.resize(cols, rows)
     },
-    kill() {
-      subprocess.kill()
+    kill(signal?: string) {
+      // Kill the entire process group (-pid) so grandchildren (dev servers,
+      // build tools spawned by the shell) are also terminated. PTY children
+      // are session leaders, so pid === pgid.
+      // Falls back to killing just the direct child if group kill fails.
+      const sig = (signal ?? 'SIGTERM') as NodeJS.Signals
+      try {
+        process.kill(-subprocess.pid, sig)
+      } catch {
+        try { subprocess.kill() } catch {}
+      }
     },
     onData(callback) {
       dataCallback = callback

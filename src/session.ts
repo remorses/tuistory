@@ -900,9 +900,19 @@ export class Session {
     this.dataSubscribers.clear()
     // Drain all pending resolvers so no promises hang after close
     this.drainResolvers()
-    // Only kill the PTY if the process is still alive
+    // Kill the PTY process group if still alive. SIGTERM first for graceful
+    // shutdown, then SIGKILL to guarantee cleanup. Without SIGKILL escalation,
+    // stubborn processes (e.g. dev servers ignoring SIGTERM) keep ports open.
     if (!this.dead) {
-      this.pty.kill()
+      this.pty.kill('SIGTERM')
+      // Schedule SIGKILL after a short grace period in case SIGTERM is ignored.
+      // This is fire-and-forget; if the process already exited, kill() will
+      // silently fail (caught in the PTY wrapper).
+      setTimeout(() => {
+        if (!this.dead) {
+          this.pty.kill('SIGKILL')
+        }
+      }, 500)
     }
     this.term.destroy()
 

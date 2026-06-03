@@ -1,9 +1,10 @@
 import { spawn as zigSpawn } from 'zigpty'
 
 export interface IPty {
+  pid: number
   write(data: string): void
   resize(cols: number, rows: number): void
-  kill(): void
+  kill(signal?: string): void
   onData(callback: (data: string) => void): void
   onExit(callback: (info: { exitCode: number; signal: number }) => void): void
 }
@@ -50,14 +51,24 @@ export function spawn(command: string, args: string[], options: SpawnOptions): I
   })
 
   return {
+    pid: pty.pid,
     write(data) {
       pty.write(data)
     },
     resize(cols, rows) {
       pty.resize(cols, rows)
     },
-    kill() {
-      pty.kill()
+    kill(signal?: string) {
+      // Kill the entire process group (-pid) so grandchildren (dev servers,
+      // build tools spawned by the shell) are also terminated. PTY children
+      // are session leaders (forkpty calls setsid), so pid === pgid.
+      // Falls back to killing just the direct child if group kill fails.
+      const sig = signal ?? 'SIGTERM'
+      try {
+        process.kill(-pty.pid, sig)
+      } catch {
+        try { pty.kill(sig) } catch {}
+      }
     },
     onData(callback) {
       dataCallback = callback
