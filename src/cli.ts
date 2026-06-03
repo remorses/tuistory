@@ -2172,22 +2172,30 @@ async function runCliClient() {
       ...parseEnvOptions(inspectCli.options.env as string[] | undefined),
     }
     const isWindows = os.platform() === 'win32'
+    // When nested inside another tuistory session, do NOT detach into a new
+    // process group. The outer PTY session group must remain the owner so
+    // Session.close() (SIGTERM → SIGKILL) catches the entire tree. Detaching
+    // would let stubborn children survive as orphans after the outer session
+    // kills its process group. External runners (traforo/sigillo) still need
+    // detached groups so their own signal forwarding works correctly.
+    const isNestedTuistory = !!process.env.TUISTORY_SESSION
+    const useDetached = !isWindows && !isNestedTuistory
     const child = spawn(
       isWindows ? 'cmd.exe' : 'sh',
       isWindows ? ['/c', launchCommand] : ['-c', launchCommand],
-      { stdio: 'inherit', cwd, env, detached: !isWindows },
+      { stdio: 'inherit', cwd, env, detached: useDetached },
     )
 
     let childExited = false
 
-    // Kill the entire process group on POSIX, or the direct child on Windows.
+    // Kill the process group (detached) or direct child (nested/Windows).
     const killChild = (signal: NodeJS.Signals) => {
       if (!child.pid || childExited) return
       try {
-        if (isWindows) {
-          child.kill(signal)
-        } else {
+        if (useDetached) {
           process.kill(-child.pid, signal)
+        } else {
+          child.kill(signal)
         }
       } catch {
         // Process already exited
