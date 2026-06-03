@@ -369,16 +369,15 @@ describe('CLI error handling', () => {
     await runCli(['close', ...s])
   }, 15000)
 
-  test('launch refuses to nest inside an existing tuistory session', async () => {
-    const nested = await runCli(['launch', 'echo nope', '-s', 'nested-launch-test'], {
+  test('nested tuistory passes through to child command instead of erroring', async () => {
+    const nested = await runCli(['launch', 'echo hello-from-nested', '-s', 'nested-launch-test'], {
       env: { TUISTORY_SESSION: 'outer-session' },
     })
 
-    expect(nested.exitCode).toBe(1)
-    expect(nested.stderr).toContain('Refusing to launch a nested tuistory session inside "outer-session"')
-    expect(nested.stderr).toContain("Attempted tuistory command:\n  tuistory launch 'echo nope' -s nested-launch-test")
-    expect(nested.stderr).toContain('The command you launched is already running inside its own tuistory session.')
-    expect(nested.stderr).toContain('The script will start the tuistory session itself in the background.')
+    // Inner tuistory should exec the command directly (passthrough) and
+    // exit with the child's exit code. No session is created on the relay.
+    expect(nested.exitCode).toBe(0)
+    expect(nested.stdout).toContain('hello-from-nested')
 
     const sessions = await runCli(['sessions'])
     expect(sessions.stdout).not.toContain('nested-launch-test')
