@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.9.0
+
+1. **Nested tuistory passthrough** — when tuistory runs inside another tuistory session (`TUISTORY_SESSION` is set), the inner tuistory passes through to the child command with inherited stdio instead of refusing with exit code 1. This fixes the common pattern where `tuistory launch "pnpm dev"` runs a dev script that itself contains a tuistory command:
+
+   ```bash
+   # package.json: "dev": "tuistory -- sigillo run -- vite dev"
+   tuistory launch "pnpm dev" -s myapp
+   # inner tuistory passes through instead of erroring
+   ```
+
+2. **Bare positional args are now rejected** — `tuistory randomarg` returns "Unknown command" instead of silently treating it as a launch command. Use the explicit forms:
+
+   ```bash
+   tuistory -- echo hello        # canonical
+   tuistory launch "echo hello"  # explicit
+   ```
+
+3. **Nested passthrough stays in outer process group** — when passing through inside a tuistory session, the child process is NOT detached into a new process group. This ensures the outer session's `close()` SIGTERM/SIGKILL reaches the entire tree, preventing orphaned grandchildren.
+
+4. **Updated zigpty to ^0.2.0**
+
+5. **Fixed onExit/close race condition** — `Session.onExit` now marks `dead=true` before checking `this.closed`, so `close()` correctly sees the process is already dead instead of unnecessarily escalating to SIGKILL.
+
+6. **Reverted launch timeout to 5s** (was bumped to 10s). Pass `--timeout` to override.
+
 ## 0.8.1
 
 1. **Closing/restarting a session now kills the whole process group, not just the PTY leader** — previously `close` and `restart` only signaled the leader process (e.g. the `sh -c` wrapper). A grandchild dev server like `vite` or `pnpm` that traps `SIGHUP`/`SIGTERM` (or detaches from the controlling terminal) survived as an orphan and kept holding its port, causing `EADDRINUSE` on the next launch. tuistory now signals the entire foreground process group (`SIGTERM`, escalating to `SIGKILL`), so wrapped commands like `tuistory -- kimaki tunnel -- pnpm dev` tear down cleanly:
