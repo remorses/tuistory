@@ -1,8 +1,10 @@
+import { killProcessGroup } from './kill-process-group.js'
+
 export interface IPty {
   pid: number
   write(data: string): void
   resize(cols: number, rows: number): void
-  kill(signal?: string): void
+  kill(): void
   onData(callback: (data: string) => void): void
   onExit(callback: (info: { exitCode: number; signal: number }) => void): void
 }
@@ -81,17 +83,11 @@ export function spawn(command: string, args: string[], options: SpawnOptions): I
     resize(cols, rows) {
       terminal.resize(cols, rows)
     },
-    kill(signal?: string) {
-      // Kill the entire process group (-pid) so grandchildren (dev servers,
-      // build tools spawned by the shell) are also terminated. PTY children
-      // are session leaders, so pid === pgid.
-      // Falls back to killing just the direct child if group kill fails.
-      const sig = (signal ?? 'SIGTERM') as NodeJS.Signals
-      try {
-        process.kill(-subprocess.pid, sig)
-      } catch {
-        try { subprocess.kill(sig) } catch {}
-      }
+    kill() {
+      // Kill the whole foreground process group, not just the PTY leader, so
+      // grandchildren (e.g. `vite` behind a `sh -c` wrapper) don't get
+      // orphaned and keep holding their ports. Falls back to the leader.
+      killProcessGroup(subprocess.pid, () => subprocess.kill())
     },
     onData(callback) {
       dataCallback = callback

@@ -1,10 +1,11 @@
 import { spawn as zigSpawn } from 'zigpty'
+import { killProcessGroup } from './kill-process-group.js'
 
 export interface IPty {
   pid: number
   write(data: string): void
   resize(cols: number, rows: number): void
-  kill(signal?: string): void
+  kill(): void
   onData(callback: (data: string) => void): void
   onExit(callback: (info: { exitCode: number; signal: number }) => void): void
 }
@@ -58,17 +59,13 @@ export function spawn(command: string, args: string[], options: SpawnOptions): I
     resize(cols, rows) {
       pty.resize(cols, rows)
     },
-    kill(signal?: string) {
-      // Kill the entire process group (-pid) so grandchildren (dev servers,
-      // build tools spawned by the shell) are also terminated. PTY children
-      // are session leaders (forkpty calls setsid), so pid === pgid.
-      // Falls back to killing just the direct child if group kill fails.
-      const sig = signal ?? 'SIGTERM'
-      try {
-        process.kill(-pty.pid, sig)
-      } catch {
-        try { pty.kill(sig) } catch {}
-      }
+    kill() {
+      // Kill the whole foreground process group, not just the PTY leader.
+      // zigpty.kill() only signals the leader pid (e.g. a `sh -c` wrapper),
+      // which leaves grandchildren like `vite`/`pnpm` orphaned and holding
+      // their ports. The PTY child is a session/group leader (pgid == pid),
+      // so signaling -pid reaches the entire tree. Falls back to the leader.
+      killProcessGroup(pty.pid, () => pty.kill())
     },
     onData(callback) {
       dataCallback = callback

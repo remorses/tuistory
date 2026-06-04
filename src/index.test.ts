@@ -652,3 +652,79 @@ test.skip('claude launch', async () => {
   await session.press(['ctrl', 'c'])
   session.close()
 }, 20000)
+
+// Regression: closing a session must kill the WHOLE process group, not just
+// the PTY leader. Previously a grandchild (e.g. `vite` behind a `sh -c`
+// wrapper) was orphaned and kept holding its port, causing EADDRINUSE on the
+// next launch. We spawn a wrapper that forks a long-lived grandchild, capture
+// its pid, close the session, and assert the grandchild is dead.
+test('close kills orphaned grandchild processes (process group)', async () => {
+  const session = await launchTerminal({
+    // `sh -c` is the same wrapper shape the CLI uses for `tuistory launch`.
+    // The grandchild traps SIGHUP/SIGTERM to mimic a real dev server (vite,
+    // pnpm) that survives a leader-only kill or PTY hangup. Only a process
+    // GROUP SIGKILL takes it down — which is exactly what the fix does.
+    command: 'sh',
+    args: ['-c', 'trap "" HUP TERM; sleep 60 & echo GCPID=$!; wait'],
+    cols: 40,
+    rows: 10,
+    waitForData: false,
+  })
+
+  const out = await session.waitForText('GCPID=', { timeout: 5000 })
+  const match = out.match(/GCPID=(\d+)/)
+  expect(match).not.toBeNull()
+  const grandchildPid = Number(match![1])
+  expect(Number.isInteger(grandchildPid)).toBe(true)
+
+  // Sanity: the grandchild is alive before we close the session.
+  const aliveBefore = (() => {
+    try { process.kill(grandchildPid, 0); return true } catch { return false }
+  })()
+  expect(aliveBefore).toBe(true)
+
+  session.close()
+
+  // The grandchild should die shortly after close. Poll briefly because the
+  // kill propagates asynchronously through the process group.
+  let aliveAfter = true
+  for (let i = 0; i < 30; i++) {
+    try { process.kill(grandchildPid, 0); aliveAfter = true } catch { aliveAfter = false; break }
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  expect(aliveAfter).toBe(false)
+}, 15000)
+
+// Regression: the more realistic orphan case where the PTY LEADER exits but a
+// grandchild that ignores SIGTERM keeps running (like a dev server that
+// installs its own SIGTERM handler). The group SIGTERM→SIGKILL escalation must
+// still reap it even though the leader is already gone.
+test('close kills a SIGTERM-ignoring grandchild after the leader exits', async () => {
+  // node grandchild ignores SIGTERM AND SIGHUP (like a dev server that installs
+  // its own signal handlers and/or detaches from the controlling terminal), so
+  // neither a leader-only kill nor the PTY hangup reaps it — only the group
+  // SIGKILL does. The `sh` leader prints the pid then blocks on `wait`.
+  const grandchild = "node -e 'process.on(\"SIGTERM\",()=>{});process.on(\"SIGHUP\",()=>{});setInterval(()=>{},1000)'"
+  const session = await launchTerminal({
+    command: 'sh',
+    args: ['-c', `${grandchild} & echo GCPID=$!; wait`],
+    cols: 40,
+    rows: 10,
+    waitForData: false,
+  })
+
+  const out = await session.waitForText('GCPID=', { timeout: 5000 })
+  const grandchildPid = Number(out.match(/GCPID=(\d+)/)?.[1])
+  expect(Number.isInteger(grandchildPid)).toBe(true)
+  // Give the node grandchild a moment to install its SIGTERM handler.
+  await new Promise((r) => setTimeout(r, 400))
+
+  session.close()
+
+  let aliveAfter = true
+  for (let i = 0; i < 40; i++) {
+    try { process.kill(grandchildPid, 0); aliveAfter = true } catch { aliveAfter = false; break }
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  expect(aliveAfter).toBe(false)
+}, 15000)

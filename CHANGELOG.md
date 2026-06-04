@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.8.1
+
+1. **Closing/restarting a session now kills the whole process group, not just the PTY leader** — previously `close` and `restart` only signaled the leader process (e.g. the `sh -c` wrapper). A grandchild dev server like `vite` or `pnpm` that traps `SIGHUP`/`SIGTERM` (or detaches from the controlling terminal) survived as an orphan and kept holding its port, causing `EADDRINUSE` on the next launch. tuistory now signals the entire foreground process group (`SIGTERM`, escalating to `SIGKILL`), so wrapped commands like `tuistory -- kimaki tunnel -- pnpm dev` tear down cleanly:
+
+   ```bash
+   tuistory -s dev -- pnpm dev   # vite grandchild
+   tuistory -s dev restart       # no more orphaned vite holding the port
+   ```
+
+2. **Relay daemon lifecycle is now robust against wedged and orphaned daemons** — the client used to trust the `/version` HTTP probe to decide whether a daemon existed. A daemon that held the port but didn't answer HTTP (wedged event loop, mid-startup, or an orphan with no PID file) was mistaken for "no daemon", so the client spawned a second daemon that crashed on bind with `EADDRINUSE`. The port is now the source of truth: `ensureRelayRunning` classifies the port as healthy / no-listener / occupied-unresponsive and replaces any unhealthy owner under the restart lock, and `daemon-stop` stops whatever holds the port instead of giving up when `/version` is silent.
+
+   ```bash
+   tuistory -s dev -- kimaki tunnel -- pnpm dev   # no EADDRINUSE if an old daemon is wedged
+   tuistory daemon-stop                            # reliably frees the port, even for orphans
+   ```
+
+   The daemon also binds with its `error`/`listening` handlers attached first (via `createAdaptorServer()`), so a daemon that loses a bind race exits cleanly (code 0) instead of dumping an unhandled `EADDRINUSE` crash stack. The PID file is written only after a successful bind and removed only by its owner, so a failed-to-bind daemon can never clobber the real listener's PID file.
+
+## 0.8.0
+
+1. **Passthrough mode inside process runners** — when tuistory detects it's running inside `traforo` or `sigillo` (via `TRAFORO_URL` or `SIGILLO` env vars), it skips daemon/session management entirely and spawns the command directly with inherited stdio. This avoids unnecessary complexity when these tools already manage the child process lifecycle:
+
+   ```bash
+   # Inside a traforo tunnel, tuistory just execs the command directly
+   tuistory -s dev -- kimaki tunnel -- pnpm dev
+   ```
+
+   The inner tuistory sees `TRAFORO_URL` and passes through transparently. Signals propagate correctly to the entire process group.
+
+2. **Fixed relative `--cwd` resolution** — passing a relative path to `--cwd` now resolves it against the caller's working directory instead of using it as-is. Previously, `--cwd app` would fail or resolve incorrectly when the daemon's cwd differed from the caller's.
+
+3. **Default session names include a cwd hash** — session names now use the pattern `<basename>-<hash>-<command>` instead of `<basename>-<command>`. The 4-character hash of the full cwd path prevents collisions when different directories share the same basename (e.g. `/a/myapp` and `/b/myapp`).
+
 ## 0.7.0
 
 1. **New `--background` flag for `launch`** — skip auto-attach in TTY mode and get a help block showing all the commands to interact with the session:

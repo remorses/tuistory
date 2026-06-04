@@ -58,7 +58,43 @@ When a human runs `pnpm dev`, they get auto-attached to the terminal (same exper
 
 ## Setting up a project to use tuistory
 
-When creating a new project or adding tuistory to an existing one, wrap dev and long-running commands with `tuistory --` in `package.json` scripts:
+Do this when the user asks to **set up a project for tuistory** (or to make its dev server agent-friendly). It is the same setup used in the Holocron repo: add the dependency, wrap the long-running dev scripts, and document it in `AGENTS.md`.
+
+**The end result is shared dev sessions.** Whoever starts `pnpm dev` first owns one named background session; everyone else joins it instead of spawning a duplicate server.
+
+```
+                        pnpm dev
+                          │
+          ┌───────────────┴───────────────┐
+          ▼                               ▼
+   agent starts it                  human starts it
+          │                               │
+          ▼                               ▼
+  background session              auto-attached terminal
+  returns immediately             (normal dev experience)
+          │                               │
+          └──────────────┬────────────────┘
+                         ▼
+            ONE shared named session
+                         │
+        ┌────────────────┼────────────────┐
+        ▼                ▼                ▼
+  human joins &     agent reads logs,  either side sends
+  streams logs      waits for "ready"  input / restarts
+  live (attach)     (read / wait)      (type / press)
+```
+
+So when the **machine** starts the dev server, the **user can join and stream the logs live or send input**, and vice versa. Both collaborate on the same process instead of each running their own.
+
+**Steps:**
+
+1. Add `tuistory` to the project's dev dependencies (or root devDependencies in a monorepo so the binary resolves everywhere):
+
+```bash
+pnpm add -D tuistory     # or: bun add -d tuistory
+```
+
+2. Wrap dev and long-running commands with `tuistory --` in `package.json` scripts. Keep `tuistory --` on the **outside** of wrappers like `sigillo run` or `kimaki tunnel` (see Passthrough mode below):
 
 ```json
 {
@@ -70,7 +106,7 @@ When creating a new project or adding tuistory to an existing one, wrap dev and 
 }
 ```
 
-After wrapping the scripts, add a dev server section to the **project's** `AGENTS.md` so other agents know how to use it. Use `pnpm dev` for pnpm projects and `bun dev` for bun projects (check the lock file). Example to add:
+3. Add a dev server section to the project's `AGENTS.md` so other agents know how to use it. Use `pnpm dev` for pnpm projects and `bun dev` for bun projects (check the lock file). Example to add:
 
 ```markdown
 ## dev server
