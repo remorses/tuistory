@@ -399,7 +399,18 @@ export class Session {
     }
   }
 
-  /** Extract the last N non-empty lines from terminal text for error messages. */
+  /** Build a descriptive error for when the process exits before a wait condition is met. */
+  private buildProcessExitedError(terminalText: string): Error {
+    const lastOutput = this.getLastOutputLines(terminalText, 30) || '<no output>'
+    const exitCode = this.exitInfo?.exitCode ?? 'unknown'
+    const signal = this.exitInfo?.signal ?? 0
+    const signalInfo = signal ? ` (signal: ${signal})` : ''
+    return new Error(
+      `Process exited with code ${exitCode}${signalInfo} while waiting for condition. Last output:\n${lastOutput}`,
+    )
+  }
+
+  /** Extract the last N lines after trimming trailing blank terminal rows. */
   private getLastOutputLines(text: string, count: number): string {
     const lines = text.split('\n')
     // Trim trailing empty lines
@@ -690,13 +701,7 @@ export class Session {
       // stop immediately instead of spinning until timeout. This lets agents
       // know the process crashed rather than seeing a generic timeout.
       if (this.dead) {
-        const lastOutput = this.getLastOutputLines(text, 30)
-        const exitCode = this.exitInfo?.exitCode ?? 'unknown'
-        const signal = this.exitInfo?.signal ?? 0
-        const signalInfo = signal ? ` (signal: ${signal})` : ''
-        throw new Error(
-          `Process exited with code ${exitCode}${signalInfo} while waiting for condition. Last output:\n${lastOutput}`,
-        )
+        throw this.buildProcessExitedError(text)
       }
     }
 
@@ -705,13 +710,7 @@ export class Session {
     if (!waitFor(normalizeForWait(finalWaitText))) {
       // Differentiate between "process died" and "genuine timeout"
       if (this.dead) {
-        const lastOutput = this.getLastOutputLines(finalText, 30)
-        const exitCode = this.exitInfo?.exitCode ?? 'unknown'
-        const signal = this.exitInfo?.signal ?? 0
-        const signalInfo = signal ? ` (signal: ${signal})` : ''
-        throw new Error(
-          `Process exited with code ${exitCode}${signalInfo} while waiting for condition. Last output:\n${lastOutput}`,
-        )
+        throw this.buildProcessExitedError(finalText)
       }
       throw new Error(`text() timed out after ${timeout}ms waiting for condition. Current terminal content:\n${finalText}`)
     }

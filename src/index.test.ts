@@ -157,6 +157,19 @@ test('waitForText with regex', async () => {
   session.close()
 }, 10000)
 
+test('waitForText rejects immediately with exit info when child exits before match', async () => {
+  const session = await launchTerminal({
+    command: 'bash',
+    args: ['-c', 'echo crashing-now; exit 7'],
+    cols: 80,
+    rows: 10,
+  })
+
+  await expect(session.waitForText('never-happens', { timeout: 30000 }))
+    .rejects.toThrow(/Process exited with code 7/)
+  session.close()
+}, 10000)
+
 test('cleans up auto-generated TERMCAST sqlite artifacts on close', async () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tuistory-termcast-db-cleanup-'))
 
