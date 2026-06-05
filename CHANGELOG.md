@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.10.0
+
+1. **Copy-on-select in attach TUI** — drag-selecting text in the attach view automatically copies it to clipboard on mouse release, matching how most terminal emulators work. Uses `pbcopy` on macOS, `xclip` on Linux, and `clip` on Windows. Gracefully does nothing if the clipboard command is missing.
+
+2. **Detailed close reasons in attach TUI** — the status bar now shows specific messages instead of generic "Connection closed":
+
+   - `tuistory close` → "Session closed by `tuistory close`"
+   - Daemon shutdown (SIGTERM/SIGINT) → "Daemon shut down"
+   - `tuistory restart` → "Session restarting..."
+   - Daemon crash / kill -9 → "Connection lost (daemon crashed or was killed)"
+   - Signal names instead of numbers: "Process exited (code 0, SIGTERM)" instead of "signal 15"
+
+   The daemon sends a `{ type: "closing", reason }` WebSocket message before killing the PTY, so the TUI can distinguish intentional closes from unexpected disconnects.
+
+3. **`wait` exits immediately when the child process dies** — if the child exits before the pattern matches, `wait` returns right away with a clear error including the exit code, signal, and last 30 lines of terminal output. Previously it would spin for the full timeout before reporting failure.
+
+4. **Bumped @opentui/core and @opentui/react to ^0.2.12**
+
 ## 0.9.0
 
 1. **Nested tuistory passthrough** — when tuistory runs inside another tuistory session (`TUISTORY_SESSION` is set), the inner tuistory passes through to the child command with inherited stdio instead of refusing with exit code 1. This fixes the common pattern where `tuistory launch "pnpm dev"` runs a dev script that itself contains a tuistory command:
