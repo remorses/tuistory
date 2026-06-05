@@ -399,6 +399,16 @@ export class Session {
     }
   }
 
+  /** Extract the last N non-empty lines from terminal text for error messages. */
+  private getLastOutputLines(text: string, count: number): string {
+    const lines = text.split('\n')
+    // Trim trailing empty lines
+    let last = lines.length - 1
+    while (last >= 0 && lines[last].trim() === '') last--
+    const start = Math.max(0, last - count + 1)
+    return lines.slice(start, last + 1).join('\n').trimEnd()
+  }
+
   /** Throw if the PTY is dead or session is closed, preventing writes to a dead process. */
   private assertWritable(operation: string): void {
     if (this.closed) {
@@ -676,11 +686,33 @@ export class Session {
         await this.waitIdle({ timeout: 15 })
         return getCurrentText()
       }
+      // If the child process exited and the pattern still didn't match,
+      // stop immediately instead of spinning until timeout. This lets agents
+      // know the process crashed rather than seeing a generic timeout.
+      if (this.dead) {
+        const lastOutput = this.getLastOutputLines(text, 30)
+        const exitCode = this.exitInfo?.exitCode ?? 'unknown'
+        const signal = this.exitInfo?.signal ?? 0
+        const signalInfo = signal ? ` (signal: ${signal})` : ''
+        throw new Error(
+          `Process exited with code ${exitCode}${signalInfo} while waiting for condition. Last output:\n${lastOutput}`,
+        )
+      }
     }
 
     const finalText = getCurrentText()
     const finalWaitText = getCurrentWaitText()
     if (!waitFor(normalizeForWait(finalWaitText))) {
+      // Differentiate between "process died" and "genuine timeout"
+      if (this.dead) {
+        const lastOutput = this.getLastOutputLines(finalText, 30)
+        const exitCode = this.exitInfo?.exitCode ?? 'unknown'
+        const signal = this.exitInfo?.signal ?? 0
+        const signalInfo = signal ? ` (signal: ${signal})` : ''
+        throw new Error(
+          `Process exited with code ${exitCode}${signalInfo} while waiting for condition. Last output:\n${lastOutput}`,
+        )
+      }
       throw new Error(`text() timed out after ${timeout}ms waiting for condition. Current terminal content:\n${finalText}`)
     }
     return finalText

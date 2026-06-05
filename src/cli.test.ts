@@ -691,6 +691,37 @@ describe('CLI regex patterns', () => {
   }, 10000)
 })
 
+describe('wait exits early when process dies', () => {
+  test('wait returns immediately with exit info when child exits before pattern matches', async () => {
+    const s = session('wait-exit-test')
+    // Launch a command that prints some output then exits with code 1
+    await runCli(['launch', 'bash -c "echo starting-up && sleep 0.5 && echo crashing-now && exit 1"', ...s])
+
+    // Wait for a pattern that will never appear, with a long timeout
+    const wait = await runCli(['wait', '/this-will-never-match/', ...s, '--timeout', '30000'])
+    expect(wait.exitCode).toBe(1)
+    // Should mention the process exited, not a generic timeout
+    expect(wait.stderr).toContain('Process exited')
+    expect(wait.stderr).toContain('code 1')
+    // Should include the last output so agents can see what happened
+    expect(wait.stderr).toContain('crashing-now')
+
+    await runCli(['close', ...s])
+  }, 15000)
+
+  test('wait succeeds if pattern matches in final output before exit is detected', async () => {
+    const s = session('wait-exit-match-test')
+    // The command prints the target pattern then exits
+    await runCli(['launch', 'bash -c "echo found-the-pattern && exit 0"', ...s])
+
+    const wait = await runCli(['wait', 'found-the-pattern', ...s, '--timeout', '10000'])
+    expect(wait.exitCode).toBe(0)
+    expect(wait.stdout).toContain('found-the-pattern')
+
+    await runCli(['close', ...s])
+  }, 10000)
+})
+
 describe('CLI env options', () => {
   test('multiple --env options work', async () => {
     // Launch with multiple env vars
