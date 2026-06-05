@@ -1288,7 +1288,7 @@ function createCliWithActions(
 
       // Clean up old session. Guard against concurrent restart: only delete
       // if the map still points to the session we captured, not a newer one.
-      const closed = errore.try(() => session.close())
+      const closed = errore.try(() => session.close('session-restarting'))
       if (closed instanceof Error) await logger.error(`Failed to close session "${sessionName}" before restart: ${closed.message}`)
       if (sessions.get(sessionName) === session) {
         sessions.delete(sessionName)
@@ -1789,6 +1789,7 @@ async function startRelayServer() {
   // (needed for future grid view). Each client subscribes independently.
   app.get('/attach', upgradeWebSocket((c) => {
     let unsubscribe: (() => void) | null = null
+    let unsubscribeClosing: (() => void) | null = null
     let sessionName: string | null = null
 
     return {
@@ -1833,6 +1834,16 @@ async function startRelayServer() {
             } catch {}
           })
 
+          // Notify client when session is being closed (before PTY is killed),
+          // so the TUI can distinguish "tuistory close" from external signals.
+          // Also close the WS so the client's onClose fires reliably.
+          unsubscribeClosing = session.onClosing((reason) => {
+            try {
+              ws.send(JSON.stringify({ type: 'closing', reason }))
+              ws.close(1000, reason)
+            } catch {}
+          })
+
           // If session is already dead, notify immediately
           if (session.isDead && session.exitInfo) {
             ws.send(JSON.stringify({ type: 'exit', exitCode: session.exitInfo.exitCode, signal: session.exitInfo.signal }))
@@ -1871,12 +1882,14 @@ async function startRelayServer() {
       },
       onClose() {
         if (unsubscribe) unsubscribe()
+        if (unsubscribeClosing) unsubscribeClosing()
         if (sessionName) {
           void logger.log(`Attach client disconnected from session "${sessionName}"`)
         }
       },
       onError() {
         if (unsubscribe) unsubscribe()
+        if (unsubscribeClosing) unsubscribeClosing()
       },
     }
   }))
@@ -1968,7 +1981,7 @@ async function startRelayServer() {
   const gracefulShutdown = async (signal: string) => {
     await logger.log(`Relay server shutting down (${signal})`)
     for (const [name, session] of sessions) {
-      const closed = errore.try(() => session.close())
+      const closed = errore.try(() => session.close('daemon-shutdown'))
       if (closed instanceof Error) await logger.error(`Failed to close session "${name}" on shutdown: ${closed.message}`)
       await logger.log(`Session "${name}" closed on shutdown`)
     }

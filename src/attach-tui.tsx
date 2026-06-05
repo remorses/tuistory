@@ -67,15 +67,43 @@ interface AttachViewProps {
   onKill: () => void
 }
 
+// Map signal numbers to human-readable names (POSIX standard).
+const SIGNAL_NAMES: Record<number, string> = {
+  1: 'SIGHUP', 2: 'SIGINT', 3: 'SIGQUIT', 4: 'SIGILL',
+  6: 'SIGABRT', 8: 'SIGFPE', 9: 'SIGKILL', 11: 'SIGSEGV',
+  13: 'SIGPIPE', 14: 'SIGALRM', 15: 'SIGTERM',
+}
+
+/** Map a daemon close reason string to a human-readable status message. */
+function formatCloseReason(reason: string): string {
+  switch (reason) {
+    case 'session-closed': return 'Session closed by `tuistory close`'
+    case 'daemon-shutdown': return 'Daemon shut down'
+    case 'session-restarting': return 'Session restarting...'
+    default: return `Session closed (${reason})`
+  }
+}
+
 /**
  * Self-contained terminal view for a single session. Composable — a future
  * grid view renders N of these in a flex layout, each with its own WebSocket.
  */
 function AttachView({ sessionName, ws, onDetach, onKill }: AttachViewProps) {
+  const renderer = useRenderer()
   const termRef = useRef<GhosttyTerminalRenderable>(null)
   const { width, height } = useTerminalDimensions()
   const [status, setStatus] = useState<string | null>(null)
-  const [processExited, setProcessExited] = useState(false)
+  const [processExited, _setProcessExited] = useState(false)
+  // Ref mirror of processExited so the onClose handler (captured in a
+  // useEffect with [ws] deps) always sees the latest value.
+  const processExitedRef = useRef(false)
+  const setProcessExited = useCallback((v: boolean) => {
+    processExitedRef.current = v
+    _setProcessExited(v)
+  }, [])
+  // Track the close reason sent by the daemon so we can show a specific
+  // message instead of generic "Connection closed".
+  const closeReasonRef = useRef<string | null>(null)
 
   // Terminal fills everything except the 1-row status bar
   const termCols = Math.max(20, width)
@@ -94,15 +122,26 @@ function AttachView({ sessionName, ws, onDetach, onKill }: AttachViewProps) {
       const data = event.data
       const str = typeof data === 'string' ? data : String(data)
 
-      // Check for JSON control messages (exit, error)
+      // Check for JSON control messages (exit, error, closing)
       if (str.startsWith('{')) {
         try {
           const msg = JSON.parse(str)
           if (msg.type === 'exit') {
-            const parts = [`Process exited (code ${msg.exitCode}`]
-            if (msg.signal) parts[0] += `, signal ${msg.signal}`
-            parts[0] += ')'
-            setStatus(parts.join(' '))
+            const signalName = msg.signal ? SIGNAL_NAMES[msg.signal] || `signal ${msg.signal}` : null
+            let text = `Process exited (code ${msg.exitCode}`
+            if (signalName) text += `, ${signalName}`
+            text += ')'
+            setStatus(text)
+            setProcessExited(true)
+            return
+          }
+          if (msg.type === 'closing') {
+            // Daemon is about to close this session. Store the reason so the
+            // onClose handler can also reference it, and update the TUI
+            // immediately (don't rely solely on onClose firing).
+            const closeReason = msg.reason ?? 'unknown'
+            closeReasonRef.current = closeReason
+            setStatus(formatCloseReason(closeReason))
             setProcessExited(true)
             return
           }
@@ -121,8 +160,36 @@ function AttachView({ sessionName, ws, onDetach, onKill }: AttachViewProps) {
       }
     }
 
-    const onClose = () => {
-      setStatus('Connection closed')
+    const onClose = (event: CloseEvent) => {
+      // If the process already exited and the connection closes normally,
+      // the exit message is already displayed — nothing more to show.
+      if (processExitedRef.current) return
+
+      const reason = closeReasonRef.current
+      if (reason) {
+        setStatus(formatCloseReason(reason))
+        setProcessExited(true)
+        return
+      }
+
+      // No closing message received — classify from the WebSocket close code.
+      // 1006 = abnormal closure (no close frame), meaning daemon crashed or was killed.
+      if (event.code === 1006) {
+        setStatus('Connection lost (daemon crashed or was killed)')
+        setProcessExited(true)
+        return
+      }
+      // 1001 = going away (server shutting down without sending a closing message)
+      if (event.code === 1001) {
+        setStatus('Daemon shut down')
+        setProcessExited(true)
+        return
+      }
+
+      // Fallback: show code and reason if available
+      const detail = event.reason || `code ${event.code}`
+      setStatus(`Connection closed (${detail})`)
+      setProcessExited(true)
     }
 
     ws.addEventListener('message', onMessage)

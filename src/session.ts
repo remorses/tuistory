@@ -207,6 +207,7 @@ export class Session {
   /** Timestamp (ms) when the session was created. */
   readonly startedAt: number = Date.now()
   private exitListeners: Array<(info: { exitCode: number; signal: number }) => void> = []
+  private closeListeners: Array<(reason: string) => void> = []
 
   constructor(options: LaunchOptions) {
     this.cols = options.cols ?? 120
@@ -354,6 +355,20 @@ export class Session {
       return
     }
     this.exitListeners.push(callback)
+  }
+
+  /**
+   * Register a callback for when the session is about to be closed (via `close(reason)`).
+   * Fires before subscribers are cleared and the PTY is killed, so the callback
+   * can still send messages to attached clients. The reason string distinguishes
+   * "session-closed" (user ran `tuistory close`) from "daemon-shutdown", etc.
+   */
+  onClosing(callback: (reason: string) => void): () => void {
+    this.closeListeners.push(callback)
+    return () => {
+      const index = this.closeListeners.indexOf(callback)
+      if (index !== -1) this.closeListeners.splice(index, 1)
+    }
   }
 
   /** Wait for the PTY process to exit. Returns true if it exited, false on timeout. */
@@ -929,9 +944,16 @@ export class Session {
     this.pty.resize(options.cols, options.rows)
   }
 
-  close(): void {
+  close(reason: string = 'session-closed'): void {
     this.closed = true
     clearTimeout(this.idleTimer)
+    // Notify close listeners BEFORE clearing subscribers, so they can still
+    // send final messages to attached WS clients through the data channel.
+    // Wrap each call so a throwing listener cannot abort the rest of close().
+    const listeners = this.closeListeners.splice(0)
+    for (const fn of listeners) {
+      try { fn(reason) } catch {}
+    }
     // Clear all attach subscribers
     this.dataSubscribers.clear()
     // Drain all pending resolvers so no promises hang after close
