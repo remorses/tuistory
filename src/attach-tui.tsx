@@ -9,9 +9,24 @@
 // so we use the native WebSocket API available in Bun's global scope.
 
 import { createCliRenderer, TextAttributes, type MouseEvent as OpenTUIMouseEvent } from '@opentui/core'
-import { createRoot, useKeyboard, useTerminalDimensions, useOnResize, extend } from '@opentui/react'
+import { createRoot, useKeyboard, useRenderer, useTerminalDimensions, useOnResize, extend } from '@opentui/react'
 import { GhosttyTerminalRenderable } from 'ghostty-opentui/terminal-buffer'
 import { useRef, useState, useEffect, useCallback } from 'react'
+import { spawn } from 'child_process'
+
+function copyToClipboard(text: string): void {
+  const cmd = process.platform === 'darwin' ? 'pbcopy'
+    : process.platform === 'linux' ? 'xclip'
+    : process.platform === 'win32' ? 'clip'
+    : null
+  if (!cmd) return
+  const args = cmd === 'xclip' ? ['-selection', 'clipboard'] : []
+  const child = spawn(cmd, args, { stdio: ['pipe', 'ignore', 'ignore'] })
+  // Swallow errors when clipboard command is missing (e.g. no xclip on Linux)
+  child.on('error', () => {})
+  child.stdin?.on('error', () => {})
+  child.stdin?.end(text)
+}
 
 // Register the ghostty-terminal component for JSX use
 extend({ 'ghostty-terminal': GhosttyTerminalRenderable })
@@ -216,6 +231,17 @@ function AttachView({ sessionName, ws, onDetach, onKill }: AttachViewProps) {
     timeout: ReturnType<typeof setTimeout>
   } | null>(null)
 
+  // Copy-on-select: when user finishes a mouse drag selection, copy to clipboard
+  const handleCopyOnSelect = useCallback(() => {
+    if (!renderer?.hasSelection) return
+    const selection = renderer.getSelection()
+    if (!selection) return
+    const text = selection.getSelectedText()
+    if (!text) return
+    copyToClipboard(text)
+    renderer.clearSelection()
+  }, [renderer])
+
   const clearPendingCtrlKey = useCallback(() => {
     if (!pendingCtrlKey.current) return
     clearTimeout(pendingCtrlKey.current.timeout)
@@ -283,7 +309,7 @@ function AttachView({ sessionName, ws, onDetach, onKill }: AttachViewProps) {
   })
 
   return (
-    <box style={{ flexDirection: 'column', flexGrow: 1 }}>
+    <box style={{ flexDirection: 'column', flexGrow: 1 }} onMouseUp={handleCopyOnSelect}>
       {/* Terminal view fills available space */}
       <box height={termRows} overflow="hidden" width={termCols}>
         <ghostty-terminal
@@ -332,7 +358,8 @@ export async function runAttachTui({ sessionName, relayPort }: {
 
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
-    useAlternateScreen: true,
+    useMouse: true,
+    screenMode: 'alternate-screen',
   })
 
   let cleanedUp = false
