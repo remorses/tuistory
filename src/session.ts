@@ -889,13 +889,12 @@ export class Session {
     if (this.outputReadIndex >= this.outputChunks.length) {
       return ''
     }
-    // Don't read while parser is mid-escape-sequence — the raw chunks would
-    // contain a partial sequence that ptyToText can't strip cleanly.
-    if (!this.term.isReady()) {
-      return ''
-    }
+    // Previously this checked this.term.isReady() and returned '' if the parser
+    // was mid-escape-sequence. That caused read() to silently return empty for
+    // busy processes (e.g. vite dev servers) that keep the parser almost never
+    // in ground state. ptyToText() already handles stripping partial ANSI
+    // sequences, so the guard was unnecessary and harmful.
     let raw = ''
-    // Remaining full chunks
     while (this.outputReadIndex < this.outputChunks.length) {
       raw += this.outputChunks[this.outputReadIndex]
       this.outputReadIndex++
