@@ -8,6 +8,8 @@ import path from 'node:path'
 import os from 'node:os'
 
 const CLI_PATH = new URL('./cli.ts', import.meta.url).pathname
+const PACKAGE_JSON_PATH = new URL('../package.json', import.meta.url).pathname
+const PACKAGE_VERSION = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, 'utf-8')).version as string
 const TEST_PID_FILE = `/tmp/tuistory/relay-${process.env.TUISTORY_PORT}.pid`
 
 // Helper to run CLI command
@@ -165,7 +167,7 @@ describe('CLI help and version', () => {
   test('--version shows version', async () => {
     const { stdout, exitCode } = await runCli(['--version'])
     expect(exitCode).toBe(0)
-    expect(stdout).toMatch(/tuistory\/\d+\.\d+\.\d+/)
+    expect(stdout).toBe(`tuistory/${PACKAGE_VERSION}`)
   })
 })
 

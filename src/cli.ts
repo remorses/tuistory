@@ -2249,6 +2249,11 @@ async function runDaemonStopCommand() {
 
 // CLI thin client - forwards to relay
 async function runCliClient() {
+  if (process.argv.length === 3 && (process.argv[2] === '--version' || process.argv[2] === '-v')) {
+    console.log(`tuistory/${VERSION}`)
+    return
+  }
+
   const inspectCtx: CommandResult = { stdout: '', stderr: '', exitCode: 0 }
   const inspectCli = createCliWithActions(inspectCtx, new Map(), dummyLogger)
   await inspectCli.parse(process.argv, { run: false })
