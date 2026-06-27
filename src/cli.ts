@@ -2048,6 +2048,15 @@ function spawnRelayServer(): void {
   const serverProcess = spawn(execPath, [__filename], {
     detached: true,
     stdio: 'ignore',
+    // Use a stable cwd that will never become stale. The daemon is long-lived
+    // and its inherited cwd can be invalidated if the caller's directory is
+    // deleted/recreated (e.g. by pnpm install recreating node_modules). A stale
+    // daemon cwd causes forkpty children to inherit a broken cwd reference,
+    // which on macOS makes getcwd() return EPERM even after chdir() succeeds
+    // in the child — leading to "EPERM: process.cwd failed ... uv_cwd" errors
+    // in every PTY session. The daemon never uses its own cwd (it receives
+    // target cwds from clients), so pinning it to $HOME is safe.
+    cwd: os.homedir(),
     // Explicitly set TUISTORY_PORT so the spawned daemon binds to the same
     // port the client expects. Without this, an inherited TUISTORY_PORT from
     // an outer tuistory session can make the daemon bind to the wrong port.
@@ -2426,6 +2435,12 @@ const isRelayServer = process.env.TUISTORY_RELAY === '1'
 
 if (isRelayServer) {
   process.title = 'tuistory-relay'
+  // Ensure the daemon's own cwd is valid. If spawned from a directory that was
+  // later deleted (e.g. pnpm recreating node_modules), the inherited cwd is a
+  // stale vnode reference. On macOS, forkpty children inherit this broken state
+  // and getcwd() returns EPERM even after chdir() succeeds in the child. Pinning
+  // to $HOME prevents this entire class of bugs.
+  try { process.chdir(os.homedir()) } catch {}
   void startRelayServer()
 } else {
   void runCliClient()
