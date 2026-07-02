@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.10.1
+
+1. **Fixed macOS `uv_cwd` failures after dependency installs** — the relay daemon now starts from `$HOME` instead of inheriting the caller's working directory. This prevents long-lived daemons from keeping a stale cwd after folders like `node_modules` are deleted and recreated, which could make every new PTY session fail with `EPERM: process.cwd failed ... uv_cwd`.
+
+2. **Fixed `tuistory --version` output** — version checks now print only the version line instead of mixing in help text:
+
+   ```bash
+   tuistory --version
+   # tuistory/0.10.1
+   ```
+
+3. **Fixed early empty snapshots while processes are still rendering** — `read`, `snapshot`, and text waits no longer treat a busy PTY as ready with empty output. They wait for real terminal content or return a clear process-exited error with the last output.
+
 ## 0.10.0
 
 1. **Copy-on-select in attach TUI** — drag-selecting text in the attach view automatically copies it to clipboard on mouse release, matching how most terminal emulators work. Uses `pbcopy` on macOS, `xclip` on Linux, and `clip` on Windows. Gracefully does nothing if the clipboard command is missing.
