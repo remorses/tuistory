@@ -270,6 +270,31 @@ describe('CLI basic workflow', () => {
     await runCli(['close', '-s', sessionName])
   }, 10000)
 
+  test('launch of silent long-running command warns but succeeds', async () => {
+    // Commands like `ffmpeg -listen` or `sleep` print nothing at startup.
+    // waitForData times out, but the session exists and the process is
+    // alive — launch must exit 0 with a warning suggesting --no-wait.
+    const launch = await runCli(['launch', 'sleep 60', '-s', 'silent-launch', '--timeout', '300'])
+    expect(launch.exitCode).toBe(0)
+    expect(launch.stdout).toContain('Session "silent-launch" started')
+    expect(launch.stderr).toContain('produced no output within 300ms')
+    expect(launch.stderr).toContain('still running')
+    expect(launch.stderr).toContain('--no-wait')
+
+    const sessions = await runCli(['sessions'])
+    expect(sessions.stdout).toContain('silent-launch')
+
+    await runCli(['close', '-s', 'silent-launch'])
+  }, 10000)
+
+  test('launch of command that dies without output still fails', async () => {
+    const launch = await runCli(['launch', 'true', '-s', 'dead-launch', '--timeout', '300'])
+    expect(launch.exitCode).toBe(1)
+    expect(launch.stderr).toContain('dead-launch')
+
+    await runCli(['close', '-s', 'dead-launch'])
+  }, 10000)
+
   test('bare positional arg is rejected (must use launch or --)', async () => {
     const result = await runCli(['printf hello', '-s', 'default-launch'])
     expect(result.exitCode).toBe(1)

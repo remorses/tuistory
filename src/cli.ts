@@ -389,9 +389,20 @@ function createCliWithActions(
         catch: (e) => new SessionCommandError({ operation: 'launch', session: sessionName, reason: errorReason(e), cause: e }),
       })
       if (waited instanceof Error) {
-        ctx.stderr = waited.message
-        ctx.exitCode = 1
-        return
+        // Only a dead process is a real launch failure. A timeout with the
+        // process still alive just means the command is silent at startup
+        // (e.g. `ffmpeg -listen`, `sleep`) — the session exists and keeps
+        // running in the daemon, so report success with a warning.
+        if (session.isDead) {
+          ctx.stderr = waited.message
+          ctx.exitCode = 1
+          return
+        }
+        ctx.stderr = dedent`
+          Session "${sessionName}" started, but produced no output within ${options.timeout}ms.
+          The process is still running in the background.
+          If the command is expected to be silent at startup, pass --no-wait to skip this check.
+        `
       }
     }
 
@@ -1325,10 +1336,17 @@ function createCliWithActions(
         // If waitForData timed out but the process is still alive, treat
         // restart as successful. Silent processes (e.g. sleep) produce no
         // initial output, so timing out is expected, not an error.
-        if (waited instanceof Error && newSession.isDead) {
-          ctx.stderr = waited.message
-          ctx.exitCode = 1
-          return
+        if (waited instanceof Error) {
+          if (newSession.isDead) {
+            ctx.stderr = waited.message
+            ctx.exitCode = 1
+            return
+          }
+          ctx.stderr = dedent`
+            Session "${sessionName}" restarted, but produced no output within 5000ms.
+            The process is still running in the background.
+            If the command is expected to be silent at startup, pass --no-wait to skip this check.
+          `
         }
       }
 
