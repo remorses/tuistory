@@ -293,7 +293,7 @@ tuistory -s x wait "Tests:" --timeout 60000
 tuistory read -s x
 ```
 
-**Use `wait-idle` when you don't know what to wait for.** It waits until the terminal stops receiving data (~60ms of silence):
+**Use `wait-idle` when you don't know what to wait for.** It waits until the terminal stops receiving data (~200ms of silence by default):
 
 ```bash
 tuistory -- npm test
@@ -402,8 +402,16 @@ const session = await launchTerminal({
   rows: 36,
   cwd: '/path/to/dir',
   env: { MY_VAR: 'value' },
+  idleDelayMs: 200,
 })
 ```
+
+`idleDelayMs` controls how long the PTY must stop producing output before the
+session is considered idle. It defaults to 200ms so multi-write TUI renders are
+captured as complete frames. Use a shorter delay only when the application
+renders atomically or your test follows actions with a stronger readiness
+predicate. The default `waitIdle()` timeout grows with longer configured delays;
+an explicit `waitIdle({ timeout })` still takes precedence.
 
 ### `session.type(text)`
 

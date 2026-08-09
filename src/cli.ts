@@ -454,7 +454,7 @@ function createCliWithActions(
 
       Returns the full text content of the terminal buffer.
       By default, waits for the terminal to become idle before
-      capturing (no new data for ~60ms).
+      capturing (no new data for ~200ms).
 
       Use \`--trim\` to strip trailing whitespace and empty lines
       for cleaner output. Use \`--json\` to get structured output
@@ -1036,7 +1036,7 @@ function createCliWithActions(
     .command('wait-idle', dedent`
       Wait for the terminal to stop receiving data (become idle).
 
-      Waits until no new data has been received for ~60ms,
+      Waits until no new data has been received for ~200ms,
       indicating the application has finished rendering.
 
       Useful between rapid actions to ensure the terminal has

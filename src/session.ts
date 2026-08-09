@@ -14,6 +14,8 @@ export interface LaunchOptions {
   showCursor?: boolean
   /** Human-readable command string for display (e.g. "pnpm dev"). Falls back to command + args. */
   label?: string
+  /** Milliseconds without PTY output before the session is considered idle. Default: 200. */
+  idleDelayMs?: number
 }
 
 function sanitizeTermcastDbSuffix(suffix: string): string {
@@ -186,6 +188,7 @@ export class Session {
   private dataResolvers: Array<() => void> = []
   private closed = false
   private showCursor: boolean
+  private idleDelayMs: number
   // Original env options passed at launch (not the full process.env merge).
   // Stored so restart can faithfully recreate the session.
   private sessionEnv: Record<string, string | undefined>
@@ -213,6 +216,7 @@ export class Session {
     this.cols = options.cols ?? 120
     this.rows = options.rows ?? 36
     this.showCursor = options.showCursor ?? false
+    this.idleDelayMs = options.idleDelayMs ?? 200
     this.sessionCwd = options.cwd ?? process.cwd()
     this.sessionCommand = options.label ?? [options.command, ...(options.args ?? [])].join(' ')
     this.sessionEnv = options.env ?? {}
@@ -281,7 +285,7 @@ export class Session {
         resolvers.forEach((fn) => {
           fn()
         })
-      }, 200) // Wait 200ms after last data for content to stabilize
+      }, this.idleDelayMs)
     })
 
     // When the PTY child process exits, mark session as dead and resolve all
@@ -470,7 +474,7 @@ export class Session {
   }
 
   async waitIdle(options?: { timeout?: number }): Promise<void> {
-    const timeout = options?.timeout ?? 500
+    const timeout = options?.timeout ?? Math.max(500, this.idleDelayMs * 2)
     return new Promise<void>((resolve) => {
       if (!this.idleTimer) {
         setTimeout(resolve, Math.min(timeout, 20))
