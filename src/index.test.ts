@@ -30,6 +30,84 @@ test('echo command', async () => {
   session.close()
 }, 10000)
 
+test('supports a configurable idle delay', async () => {
+  const session = await launchTerminal({
+    command: process.execPath,
+    args: [
+      '-e',
+      `process.stdout.write('first');
+       setTimeout(() => process.stdout.write('second'), 120);
+       setTimeout(() => process.exit(0), 500);`,
+    ],
+    cols: 40,
+    rows: 10,
+    idleDelayMs: 20,
+    waitForData: false,
+  })
+
+  try {
+    await session.waitForData({ timeout: 1000 })
+    await session.waitIdle({ timeout: 500 })
+
+    const firstIdleFrame = await session.text({ immediate: true })
+    expect(firstIdleFrame).toContain('first')
+    expect(firstIdleFrame).not.toContain('second')
+
+    await session.waitForText('second', { timeout: 1000 })
+  } finally {
+    session.close()
+  }
+}, 10000)
+
+test('uses a 200ms idle delay by default', async () => {
+  const session = await launchTerminal({
+    command: process.execPath,
+    args: [
+      '-e',
+      `process.stdout.write('first');
+       setTimeout(() => process.stdout.write('second'), 120);
+       setTimeout(() => process.exit(0), 500);`,
+    ],
+    cols: 40,
+    rows: 10,
+    waitForData: false,
+  })
+
+  try {
+    await session.waitForData({ timeout: 1000 })
+    await session.waitIdle()
+
+    expect(await session.text({ immediate: true })).toContain('second')
+  } finally {
+    session.close()
+  }
+}, 10000)
+
+test('extends the default wait timeout for longer idle delays', async () => {
+  const session = await launchTerminal({
+    command: process.execPath,
+    args: [
+      '-e',
+      `process.stdout.write('first');
+       setTimeout(() => process.stdout.write('second'), 550);
+       setTimeout(() => process.exit(0), 1500);`,
+    ],
+    cols: 40,
+    rows: 10,
+    idleDelayMs: 600,
+    waitForData: false,
+  })
+
+  try {
+    await session.waitForData({ timeout: 1000 })
+    await session.waitIdle()
+
+    expect(await session.text({ immediate: true })).toContain('second')
+  } finally {
+    session.close()
+  }
+}, 10000)
+
 test('cat interactive', async () => {
   const session = await launchTerminal({
     command: 'cat',
