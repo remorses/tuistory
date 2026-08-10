@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.11.0
+
+1. **Configurable terminal idle delay** — programmatic users can reduce the default 200ms settling delay when their TUI renders atomically or their tests use a stronger readiness check. This can substantially reduce large PTY test suite runtimes while preserving the safer default behavior:
+
+   ```ts
+   const session = await launchTerminal({
+     command: 'my-tui',
+     idleDelayMs: 60,
+   })
+   ```
+
+   The implicit `waitIdle()` timeout now grows with longer configured delays. Explicit `waitIdle({ timeout })` values still take precedence. Thanks @benvinegar for [#5](https://github.com/remorses/tuistory/pull/5)!
+
+2. **Silent processes now launch and restart successfully** — commands such as `sleep` and listening `ffmpeg` processes no longer fail when they produce no startup output. Tuistory keeps the live session running and prints a warning that suggests `--no-wait` for expected silence.
+
 ## 0.10.1
 
 1. **Fixed macOS `uv_cwd` failures after dependency installs** — the relay daemon now starts from `$HOME` instead of inheriting the caller's working directory. This prevents long-lived daemons from keeping a stale cwd after folders like `node_modules` are deleted and recreated, which could make every new PTY session fail with `EPERM: process.cwd failed ... uv_cwd`.
