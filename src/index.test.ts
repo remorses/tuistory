@@ -59,6 +59,30 @@ test('supports a configurable idle delay', async () => {
   }
 }, 10000)
 
+test('waitIdle returns promptly after output has already settled', async () => {
+  const idleDelayMs = 20
+  const session = await launchTerminal({
+    command: process.execPath,
+    args: ['-e', `process.stdout.write('ready'); setTimeout(() => {}, 2000);`],
+    cols: 40,
+    rows: 10,
+    idleDelayMs,
+    waitForData: false,
+  })
+
+  try {
+    await session.waitForData({ timeout: 1000 })
+    await new Promise((resolve) => setTimeout(resolve, idleDelayMs * 3))
+
+    const startedAt = Date.now()
+    await session.waitIdle({ timeout: 300 })
+
+    expect(Date.now() - startedAt).toBeLessThan(150)
+  } finally {
+    session.close()
+  }
+}, 10000)
+
 test('uses a 200ms idle delay by default', async () => {
   const session = await launchTerminal({
     command: process.execPath,
