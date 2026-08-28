@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
@@ -58,6 +58,7 @@ const packageJsonPath = path.join(path.dirname(__filename), '..', 'package.json'
 const VERSION = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8')).version as string
 const DEFAULT_SCREENSHOT_PADDING_CELLS = 2
 const MONOSPACE_CELL_WIDTH_FACTOR = 0.6
+const SESSION_ID_BYTES = 10
 
 // Logger utility
 interface Logger {
@@ -356,6 +357,7 @@ function createCliWithActions(
       ...runtime.process.env,
       ...parseEnvOptions(options.env),
       TUISTORY_SESSION: sessionName,
+      TUISTORY_SESSION_ID: randomBytes(SESSION_ID_BYTES).toString('hex'),
     }
 
     // Let the shell handle command parsing — supports pipes, env vars, subshells, etc.

@@ -276,6 +276,11 @@ Explicit `--env` flags override inherited values:
 tuistory --env NODE_ENV=production -- my-server
 ```
 
+tuistory also sets `TUISTORY_SESSION` to the session name and
+`TUISTORY_SESSION_ID` to a random ID. The ID stays the same across `restart`
+and changes after the session is closed and launched again. Process wrappers
+can use it to keep restart-scoped resources, such as tunnel URLs, stable.
+
 ## Tips for Automation
 
 **Run `snapshot` after every action.** Terminal apps are stateful and may show dialogs or errors. Always check the current state:

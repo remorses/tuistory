@@ -199,6 +199,9 @@ tuistory read -s x
 tuistory -s x restart
 ```
 
+Child processes receive a random `TUISTORY_SESSION_ID`. It stays the same
+across `restart` and changes when a new session is launched.
+
 Why this is better than `tmux`:
 
 - no blind `sleep`

@@ -1077,6 +1077,29 @@ describe('CLI restart command', () => {
     }
   }, 20000)
 
+  test('restart preserves the generated session id', async () => {
+    const s = session('restart-session-id')
+
+    await runCli(['launch', 'bash --norc --noprofile', ...s, '--env', 'PS1=$ '])
+    await runCli(['type', `printf 'id=%s\\n' "$TUISTORY_SESSION_ID"`, ...s])
+    await runCli(['press', 'enter', ...s])
+    await runCli(['wait', '/id=[0-9a-f]{20}/', ...s, '--timeout', '5000'])
+
+    const before = await runCli(['snapshot', ...s, '--trim'])
+    const beforeId = before.stdout.match(/id=([0-9a-f]{20})/)?.[1]
+    expect(beforeId).toBeDefined()
+
+    await runCli(['restart', ...s])
+    await runCli(['type', `printf 'id=%s\\n' "$TUISTORY_SESSION_ID"`, ...s])
+    await runCli(['press', 'enter', ...s])
+    await runCli(['wait', '/id=[0-9a-f]{20}/', ...s, '--timeout', '5000'])
+
+    const after = await runCli(['snapshot', ...s, '--trim'])
+    expect(after.stdout.match(/id=([0-9a-f]{20})/)?.[1]).toBe(beforeId)
+
+    await runCli(['close', ...s])
+  }, 20000)
+
   test('restart of non-existent session fails', async () => {
     const restart = await runCli(['restart', '-s', 'nonexistent-restart'])
     expect(restart.exitCode).toBe(1)
