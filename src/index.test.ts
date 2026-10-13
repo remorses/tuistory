@@ -48,6 +48,8 @@ test('supports a configurable idle delay', async () => {
   try {
     await session.waitForData({ timeout: 1000 })
     await session.waitIdle({ timeout: 500 })
+    // A settled session should take the already-idle path instead of waiting for future output.
+    await session.waitIdle({ timeout: 500 })
 
     const firstIdleFrame = await session.text({ immediate: true })
     expect(firstIdleFrame).toContain('first')

@@ -280,6 +280,7 @@ export class Session {
       // TUI apps do multiple writes during render, so we need to wait until
       // no more data arrives for a period of time
       this.idleTimer = setTimeout(() => {
+        this.idleTimer = undefined
         if (this.closed) return
         const resolvers = this.idleResolvers.splice(0)
         resolvers.forEach((fn) => {
