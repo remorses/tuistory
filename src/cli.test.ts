@@ -491,6 +491,21 @@ describe('CLI error handling', () => {
     await runCli(['close', ...s])
   }, 10000)
 
+  // Regression: relay mode used to be TUISTORY_RELAY=1 in env. PTY sessions
+  // inherit the daemon env, so any tuistory call from inside a session started
+  // a second daemon (EADDRINUSE, exit 0) instead of running the command.
+  test('tuistory called from inside a session runs as a client', async () => {
+    const s = session('relay-env-leak-test')
+    await runCli(['launch', 'printf "relay=${TUISTORY_RELAY:-unset}"', ...s])
+    const output = await runCli(['read', ...s, '--all', '--trim'])
+    expect(output.stdout).toContain('relay=unset')
+    await runCli(['close', ...s])
+
+    const sessions = await runCli(['sessions'], { env: { TUISTORY_RELAY: '1' } })
+    expect(sessions.exitCode).toBe(0)
+    expect(sessions.stdout).not.toContain('relay server running')
+  }, 10000)
+
   test('read shows exit info suffix when process has exited', async () => {
     const s = session('exit-info-test')
     const launch = await runCli(['launch', 'printf done', ...s])
@@ -600,10 +615,10 @@ describe('CLI daemon control', () => {
 
     // Spawn a raw relay daemon directly (bypassing the client's version check)
     // so it races for the already-bound port. It must exit cleanly.
-    const orphan = spawn([execPath, CLI_PATH], {
+    const orphan = spawn([execPath, CLI_PATH, '__tuistory-relay-daemon'], {
       stdout: 'pipe',
       stderr: 'pipe',
-      env: { ...process.env, TUISTORY_RELAY: '1', TUISTORY_PORT: String(port) },
+      env: { ...process.env, TUISTORY_PORT: String(port) },
     })
     const exitCode = await orphan.exited
     const stderr = await new Response(orphan.stderr).text()

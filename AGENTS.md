@@ -22,7 +22,7 @@ the test suite already handles this automatically: `src/cli.test.ts` uses port `
 
 ## relay daemon lifecycle
 
-the CLI is a thin client. all sessions live in a long-lived **relay daemon** (an HTTP + WebSocket server on `127.0.0.1:19977`, override with `TUISTORY_PORT`). the daemon is spawned detached with `stdio: 'ignore'` and `TUISTORY_RELAY=1`. every CLI invocation first runs `ensureRelayRunning()` before forwarding the command to the daemon over `POST /cli`.
+the CLI is a thin client. all sessions live in a long-lived **relay daemon** (an HTTP + WebSocket server on `127.0.0.1:19977`, override with `TUISTORY_PORT`). the daemon is spawned detached with `stdio: 'ignore'` and the argv marker `__tuistory-relay-daemon`. never use an env var for relay mode: PTY sessions inherit the daemon env, so nested `tuistory` calls would become daemons. every CLI invocation first runs `ensureRelayRunning()` before forwarding the command to the daemon over `POST /cli`.
 
 **the port is the source of truth, not the `/version` HTTP probe.** a daemon can hold the port while being unable to answer HTTP (wedged event loop, mid-startup, or an orphan whose parent died and left it on `PPID 1`). trusting `/version` alone made the client think "no daemon" and spawn a second one that crashed on bind with `EADDRINUSE`. so `probeRelay()` classifies the port into exactly three states:
 

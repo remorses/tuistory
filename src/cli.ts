@@ -46,6 +46,7 @@ function errorReason(e: unknown): string {
 
 // Constants
 export const RELAY_PORT = Number(process.env.TUISTORY_PORT) || 19977
+export const RELAY_DAEMON_ARG = '__tuistory-relay-daemon'
 const LOG_BASE_DIR = os.platform() === 'win32' ? os.tmpdir() : '/tmp'
 const TUISTORY_DIR = path.join(LOG_BASE_DIR, 'tuistory')
 export const LOG_FILE_PATH = process.env.TUISTORY_LOG_FILE_PATH || path.join(TUISTORY_DIR, 'relay-server.log')
@@ -2065,7 +2066,7 @@ function spawnRelayServer(): void {
   const isTs = __filename.endsWith('.ts')
   const execPath = isTs ? 'bun' : process.execPath
 
-  const serverProcess = spawn(execPath, [__filename], {
+  const serverProcess = spawn(execPath, [__filename, RELAY_DAEMON_ARG], {
     detached: true,
     stdio: 'ignore',
     // Use a stable cwd that will never become stale. The daemon is long-lived
@@ -2080,7 +2081,7 @@ function spawnRelayServer(): void {
     // Explicitly set TUISTORY_PORT so the spawned daemon binds to the same
     // port the client expects. Without this, an inherited TUISTORY_PORT from
     // an outer tuistory session can make the daemon bind to the wrong port.
-    env: { ...process.env, TUISTORY_RELAY: '1', TUISTORY_PORT: String(RELAY_PORT) },
+    env: { ...process.env, TUISTORY_PORT: String(RELAY_PORT) },
   })
   serverProcess.unref()
 }
@@ -2450,8 +2451,10 @@ async function runCliClient() {
   process.exit(result.exitCode)
 }
 
-// Main entry point
-const isRelayServer = process.env.TUISTORY_RELAY === '1'
+// Main entry point. Relay mode is an argv marker, not an env var: PTY sessions
+// inherit the daemon env, so an env flag leaked into every session and turned
+// each nested `tuistory` call into a daemon that exited on EADDRINUSE.
+const isRelayServer = process.argv[2] === RELAY_DAEMON_ARG
 
 if (isRelayServer) {
   process.title = 'tuistory-relay'
