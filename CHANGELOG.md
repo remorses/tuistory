@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.12.0
+
+1. **Stable `TUISTORY_SESSION_ID` across restarts** — child processes now get a random `TUISTORY_SESSION_ID` next to `TUISTORY_SESSION`. It stays the same across `tuistory restart` and changes when the session is closed and launched again. Process wrappers can use it to keep restart-scoped resources, such as tunnel URLs, stable:
+
+   ```bash
+   tuistory -s dev -- sh -c 'echo "id=$TUISTORY_SESSION_ID"; pnpm dev'
+   tuistory restart -s dev   # same id
+   ```
+
+2. **Fixed `tuistory` doing nothing when called from inside a session** — sessions inherited an internal daemon flag, so any `tuistory` call inside a session (nested dev scripts like `tuistory -- vite`, or agents running in a service started by tuistory) printed `tuistory relay server running on port 19977` and exited without running the command, even for `--help`. The relay daemon is now marked with a private argv flag that child processes never inherit.
+
 ## 0.11.0
 
 1. **Configurable terminal idle delay** — programmatic users can reduce the default 200ms settling delay when their TUI renders atomically or their tests use a stronger readiness check. This can substantially reduce large PTY test suite runtimes while preserving the safer default behavior:
