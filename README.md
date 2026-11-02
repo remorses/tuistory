@@ -187,6 +187,10 @@ tuistory attach               Attach interactively to a session (humans only)
 tuistory restart              Restart session (same command/cwd/env)
 tuistory close                Close a session
 tuistory sessions             List active sessions
+tuistory record mark <label>  Add a recording marker
+tuistory record status        Show recording status (--json supported)
+tuistory record stop          Save recording and keep the process running
+tuistory export <cast> -o <mp4> Export a recording without a daemon
 ```
 
 ### Common Options
@@ -230,6 +234,22 @@ Tools like [sigillo](https://github.com/remorses/sigillo) and [kimaki tunnel](ht
 ```
 
 tuistory should always be the **outermost wrapper** so the entire process tree lives in one session that agents can read, wait on, and restart.
+
+## Record a session
+
+```bash
+tuistory -s demo --record ./demo.cast -- your-command
+tuistory -s demo record mark 'tests passed'
+tuistory -s demo record status --json
+tuistory -s demo record stop
+tuistory export ./demo.cast -o ./demo.mp4
+```
+
+Recording starts with the process. `record stop` saves the cast and leaves the process running. FFmpeg is needed only for MP4 export; the session can already be closed. Existing files are never overwritten.
+
+Use `--speed 2` for double speed, `--idle-limit 3` to shorten waits, or `--from 60 --to 90` to export a clip. Run `tuistory export --help` for all options.
+
+Recording requires a POSIX terminal and supports up to 400 columns by 120 rows. It captures terminal output, including echoed secrets. Some emoji may appear as missing-glyph boxes. If recording fails, `record status` reports a partial file and the process keeps running.
 
 ## Background Processes (replaces tmux)
 
@@ -418,6 +438,8 @@ renders atomically or your test follows actions with a stronger readiness
 predicate. The default `waitIdle()` timeout grows with longer configured delays;
 an explicit `waitIdle({ timeout })` still takes precedence.
 
+To record, add `record: { path: './demo.cast' }` to `launchTerminal`. Use `session.recording.mark()`, `.status()`, and `await session.recording.stop()` to manage it. Export with `await exportRecording({ inputPath: './demo.cast', outputPath: './demo.mp4' })`.
+
 ### `session.type(text)`
 
 Type a string character by character.
@@ -487,6 +509,10 @@ Close the terminal session.
 ```ts
 session.close()
 ```
+
+For recorded sessions, use `await session.closeAsync()` to finish writing the recording. For unrecorded sessions, close returns immediately; use `await session.waitForExit(timeout)` to wait for the main process.
+
+The main process owns the session lifetime. Recorded sessions allow up to 200 ms for trailing output after it exits. Keep servers in the foreground or keep their shell alive with `wait`.
 
 ## Projects using tuistory
 
