@@ -548,6 +548,94 @@ describe('CLI error handling', () => {
 })
 
 describe('CLI daemon control', () => {
+  test('shutdown prevents an accepted recording launch from spawning after delayed preparation', async () => {
+    for (const delay of [250, 6000]) {
+      await killTestDaemon()
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tuistory-shutdown-prepare-'))
+      const prepared = path.join(directory, 'prepared')
+      const child = path.join(directory, 'child.pid')
+      const recording = path.join(directory, 'run.cast')
+      const preload = path.join(directory, 'delay-prepare.ts')
+      fs.writeFileSync(preload, `
+import { Recorder } from ${JSON.stringify(new URL('./recording.ts', import.meta.url).pathname)}
+import fs from 'node:fs'
+const prepare = Recorder.prepare
+const shutdown = new Promise(resolve => process.once('SIGTERM', resolve))
+Recorder.prepare = async (options) => {
+  const recorder = await prepare(options)
+  fs.writeFileSync(${JSON.stringify(prepared)}, 'ready')
+  await shutdown
+  await new Promise(resolve => setTimeout(resolve, ${delay}))
+  return recorder
+}
+`)
+      const daemon = spawn(['bun', '--preload', preload, CLI_PATH, '__tuistory-relay-daemon'], {
+        stdout: 'ignore', stderr: 'pipe', env: process.env,
+      })
+      try {
+        await waitForPortBound(Number(process.env.TUISTORY_PORT))
+        const launch = runCli(['launch', `echo $$ > '${child}'; sleep 30`, '-s', 'shutdown-prepare', '--record', recording, '--no-wait'])
+        const deadline = Date.now() + 3000
+        while (!fs.existsSync(prepared) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10))
+        expect(fs.existsSync(prepared)).toBe(true)
+        expect((await runCli(['daemon-stop'])).exitCode).toBe(0)
+        expect((await launch).exitCode).toBe(1)
+        expect(await daemon.exited).toBe(0)
+        expect(fs.existsSync(child)).toBe(false)
+        expect(fs.existsSync(recording)).toBe(false)
+        expect(fs.existsSync(`${recording}.partial`)).toBe(true)
+      } finally {
+        try { daemon.kill('SIGKILL') } catch {}
+        if (fs.existsSync(child)) {
+          const pid = Number(fs.readFileSync(child, 'utf8').trim())
+          if (pid > 1) { try { process.kill(-pid, 'SIGKILL') } catch {} }
+        }
+        fs.rmSync(directory, { recursive: true, force: true })
+      }
+    }
+  }, 20000)
+
+  test('daemon-stop closes recorded process groups while a long restart is pending', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tuistory-shutdown-restart-'))
+    const pidFile = path.join(directory, 'child.pid')
+    const recording = path.join(directory, 'run.cast')
+    const s = session('shutdown-pending-restart')
+    let pid = 0
+    const isRunning = () => {
+      try {
+        process.kill(pid, 0)
+        if (process.platform === 'linux') return !/\) Z /.test(fs.readFileSync(`/proc/${pid}/stat`, 'utf8'))
+        return true
+      } catch { return false }
+    }
+    try {
+      const command = `trap 'printf RESTART_INTERRUPTED' INT; trap '' HUP TERM; echo $$ > '${pidFile}'; printf READY; while :; do sleep 1; done`
+      expect((await runCli(['launch', command, ...s, '--record', recording])).exitCode).toBe(0)
+      pid = Number(fs.readFileSync(pidFile, 'utf8').trim())
+      expect(isRunning()).toBe(true)
+      const restarting = runCli(['restart', ...s, '--timeout', '10000', '--no-wait'])
+      const interrupted = await runCli(['wait', 'RESTART_INTERRUPTED', ...s, '--timeout', '3000'])
+      expect(interrupted.exitCode).toBe(0)
+      const stopped = await runCli(['daemon-stop'])
+      const restarted = await restarting
+      expect(isRunning()).toBe(false)
+      expect(stopped.exitCode).toBe(0)
+      expect(restarted.exitCode).toBe(1)
+      expect(restarted.stderr).toContain('Restart canceled')
+      const events = fs.readFileSync(recording, 'utf8').trimEnd().split('\n').slice(1).map(line => JSON.parse(line))
+      expect(events.at(-1)?.slice(1)).toEqual(['x', '137'])
+      expect(fs.existsSync(`${recording}.partial`)).toBe(false)
+      expect(fs.readdirSync(directory).filter(name => name.endsWith('.cast'))).toEqual(['run.cast'])
+    } finally {
+      if (pid > 1) {
+        try { process.kill(-pid, 'SIGKILL') } catch {}
+        try { process.kill(pid, 'SIGKILL') } catch {}
+      }
+      await runCli(['daemon-stop'])
+      fs.rmSync(directory, { recursive: true, force: true })
+    }
+  }, 20000)
+
   test('daemon-stop stops the relay and clears active sessions', async () => {
     const s = session('daemon-stop-test')
     const launch = await runCli(['launch', 'sleep 60', ...s, '--no-wait'])

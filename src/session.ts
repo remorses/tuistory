@@ -1,7 +1,9 @@
 import { PersistentTerminal, StyleFlags, type TerminalData, ptyToText } from 'ghostty-opentui'
 import { spawn, type IPty } from 'tuistory/pty'
+import { spawnNative, type RecordedPty, type PtyDrain } from './pty-native.js'
 import fs from 'node:fs'
 import path from 'node:path'
+import { Recorder, recordingGeometry, type RecordOptions, type RecordingHandle } from './recording.js'
 
 export interface LaunchOptions {
   command: string
@@ -16,6 +18,30 @@ export interface LaunchOptions {
   label?: string
   /** Milliseconds without PTY output before the session is considered idle. Default: 200. */
   idleDelayMs?: number
+}
+
+export type RecordedLaunchOptions = LaunchOptions & { record?: RecordOptions }
+const preparedRecorder = Symbol('preparedRecorder')
+type InternalLaunchOptions = LaunchOptions & { [preparedRecorder]?: Recorder }
+const OUTPUT_TAIL_TIMEOUT_MS = 200
+
+export async function createSession(options: RecordedLaunchOptions, canStart: () => boolean = () => true): Promise<Session> {
+  if (options.record && process.platform === 'win32') throw new Error('Terminal recording currently requires a POSIX native PTY')
+  const recorder = options.record ? await Recorder.prepare({
+    ...options.record,
+    cols: options.cols ?? 120,
+    rows: options.rows ?? 36,
+    sessionId: options.env?.TUISTORY_SESSION_ID,
+  }) : undefined
+  const { record: _record, ...launch } = options
+  try {
+    if (!canStart()) throw new Error('Relay is shutting down')
+    const internal: InternalLaunchOptions = { ...launch, [preparedRecorder]: recorder }
+    return new Session(internal)
+  } catch (error) {
+    await recorder?.abort(`Session startup failed: ${String(error)}`)
+    throw error
+  }
 }
 
 function sanitizeTermcastDbSuffix(suffix: string): string {
@@ -175,6 +201,7 @@ const CTRL_CODES: Record<string, string> = {
 }
 
 export class Session {
+  private recordingPty: RecordedPty | undefined
   private pty: IPty
   private term: PersistentTerminal
   private cols: number
@@ -187,6 +214,12 @@ export class Session {
   private hasReceivedData = false
   private dataResolvers: Array<() => void> = []
   private closed = false
+  private closing = false
+  private closePromise: Promise<void> | undefined
+  private completion: Promise<void>
+  private ptyDisposed = false
+  private recorder: Recorder | undefined
+  readonly recording: RecordingHandle | undefined
   private showCursor: boolean
   private idleDelayMs: number
   // Original env options passed at launch (not the full process.env merge).
@@ -204,6 +237,7 @@ export class Session {
   private readonly maxOutputChars = 1_000_000 // ~1M character ring buffer cap
   /** Exit info from the PTY process, null if still running. */
   private dead = false
+  private outputState: 'open' | 'eof' | 'incomplete' = 'open'
   exitInfo: { exitCode: number; signal: number } | null = null
   /** Timestamp (ms) when the PTY process exited, used for stale session eviction. */
   exitedAt: number | null = null
@@ -212,7 +246,11 @@ export class Session {
   private exitListeners: Array<(info: { exitCode: number; signal: number }) => void> = []
   private closeListeners: Array<(reason: string) => void> = []
 
-  constructor(options: LaunchOptions) {
+  constructor(options: LaunchOptions)
+  constructor(options: InternalLaunchOptions) {
+    if ('record' in options) throw new Error('Recording requires await launchTerminal({ record: { path } })')
+    this.recorder = options[preparedRecorder]
+    this.recording = this.recorder
     this.cols = options.cols ?? 120
     this.rows = options.rows ?? 36
     this.showCursor = options.showCursor ?? false
@@ -242,15 +280,28 @@ export class Session {
       TERMCAST_DB_SUFFIX: termcastDbSuffix,
     }
 
-    this.pty = spawn(options.command, options.args ?? [], {
-      cols: this.cols,
-      rows: this.rows,
-      cwd: this.sessionCwd,
-      env,
-    })
+    this.recorder?.start()
+    try {
+      const ptyOptions = {
+        cols: this.cols,
+        rows: this.rows,
+        cwd: this.sessionCwd,
+        env,
+      }
+      if (this.recorder) {
+        this.recordingPty = spawnNative(options.command, options.args ?? [], ptyOptions)
+        this.pty = this.recordingPty
+      } else {
+        this.pty = spawn(options.command, options.args ?? [], ptyOptions)
+      }
+    } catch (error) {
+      this.term.destroy()
+      throw error
+    }
 
     this.pty.onData((data) => {
       if (this.closed) return
+      this.recorder?.output(data)
       this.term.feed(data)
 
       // Accumulate raw output for read() — drop oldest chunks when over cap
@@ -267,7 +318,7 @@ export class Session {
 
       // Notify attach subscribers (raw PTY data forwarding)
       for (const sub of this.dataSubscribers) {
-        sub(data)
+        try { sub(data) } catch {}
       }
 
       if (!this.hasReceivedData) {
@@ -293,20 +344,57 @@ export class Session {
     // pending waiters so they don't hang forever. The session can still be
     // read (snapshot) but writes will fail with a clear error.
     this.pty.onExit((info) => {
-      // Always mark dead and record exit info, even if close() already ran.
-      // Without this, close() sets `closed = true` before killing, and the
-      // early return would prevent `dead` from flipping — causing the SIGKILL
-      // timer in close() to fire unnecessarily.
+      // close() can dispose the terminal before the child exits. Exit waiters
+      // still need the real process result after that disposal.
       this.dead = true
       this.exitInfo = info
       this.exitedAt = Date.now()
 
-      if (this.closed) return
-      this.drainResolvers()
+      if (!this.recordingPty) {
+        this.outputState = 'incomplete'
+        this.drainResolvers()
+      }
+      // Recorded process exit can precede the final output read.
       // Notify external listeners (e.g. the daemon for logging/cleanup)
       const listeners = this.exitListeners.splice(0)
-      listeners.forEach((fn) => fn(info))
+      listeners.forEach((fn) => { try { fn(info) } catch {} })
     })
+    this.completion = this.recordingPty ? this.finishCompletion(this.recordingPty) : Promise.resolve()
+  }
+
+  private async finishCompletion(pty: RecordedPty): Promise<void> {
+    try {
+      const info = await pty.exited
+      let timer: ReturnType<typeof setTimeout> | undefined
+      let drain: PtyDrain
+      try {
+        drain = await Promise.race([
+          pty.drained,
+          new Promise<PtyDrain>((resolve) => {
+            timer = setTimeout(() => resolve({
+              kind: 'error',
+              reason: 'PTY output still held by a descendant',
+            }), OUTPUT_TAIL_TIMEOUT_MS)
+          }),
+        ])
+      } finally {
+        clearTimeout(timer)
+      }
+      this.outputState = drain.kind === 'eof' ? 'eof' : 'incomplete'
+      this.drainResolvers()
+      if (drain.kind === 'eof') {
+        await this.recorder?.finishProcess(info)
+      } else {
+        const aborted = this.recorder?.abort(drain.reason)
+        this.disposePty()
+        await aborted
+      }
+    } catch (error) {
+      this.outputState = 'incomplete'
+      this.drainResolvers()
+      this.disposePty()
+      await this.recorder?.abort(`PTY completion failed: ${String(error)}`)
+    }
   }
 
   /** Whether the PTY process has exited (session is dead but not yet closed). */
@@ -348,7 +436,7 @@ export class Session {
    * Used by attach "kill" action to stop the process while keeping session metadata.
    */
   killProcess(): void {
-    if (!this.dead) {
+    if (!this.dead || (this.recordingPty && this.outputState !== 'eof')) {
       this.pty.kill()
     }
   }
@@ -411,12 +499,8 @@ export class Session {
     const idleResolvers = this.idleResolvers.splice(0)
     idleResolvers.forEach((fn) => fn())
 
-    // Resolve data waiters if we already received data, otherwise they'll
-    // see the timeout naturally since no more data will arrive
-    if (this.hasReceivedData) {
-      const dataResolvers = this.dataResolvers.splice(0)
-      dataResolvers.forEach((fn) => fn())
-    }
+    const dataResolvers = this.dataResolvers.splice(0)
+    dataResolvers.forEach((fn) => fn())
   }
 
   /** Build a descriptive error for when the process exits before a wait condition is met. */
@@ -442,7 +526,7 @@ export class Session {
 
   /** Throw if the PTY is dead or session is closed, preventing writes to a dead process. */
   private assertWritable(operation: string): void {
-    if (this.closed) {
+    if (this.closed || this.closing) {
       throw new Error(`Cannot ${operation}: session is closed`)
     }
     if (this.dead) {
@@ -455,11 +539,11 @@ export class Session {
     if (this.hasReceivedData) {
       return
     }
-    if (this.dead || this.closed) {
+    if (this.outputState !== 'open' || this.closed) {
       throw new Error('waitForData failed: PTY process has already exited without producing data')
     }
     const timeout = options?.timeout ?? 5000
-    return new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const t = setTimeout(() => {
         // Remove this resolver from the array to prevent leaks
         const idx = this.dataResolvers.indexOf(resolver)
@@ -472,6 +556,9 @@ export class Session {
       }
       this.dataResolvers.push(resolver)
     })
+    if (!this.hasReceivedData) {
+      throw new Error('waitForData failed: PTY process has already exited without producing data')
+    }
   }
 
   async waitIdle(options?: { timeout?: number }): Promise<void> {
@@ -720,7 +807,7 @@ export class Session {
       // If the child process exited and the pattern still didn't match,
       // stop immediately instead of spinning until timeout. This lets agents
       // know the process crashed rather than seeing a generic timeout.
-      if (this.dead) {
+      if (this.dead && this.outputState !== 'open') {
         throw this.buildProcessExitedError(text)
       }
     }
@@ -942,47 +1029,83 @@ export class Session {
 
   resize(options: { cols: number; rows: number }): void {
     this.assertWritable('resize')
+    if (this.recorder?.status().kind === 'active') recordingGeometry(options.cols, options.rows)
+    if (!Number.isSafeInteger(options.cols) || !Number.isSafeInteger(options.rows) || options.cols < 1 || options.rows < 1) {
+      throw new Error('Terminal dimensions must be positive integers')
+    }
+    this.term.resize(options.cols, options.rows)
     this.cols = options.cols
     this.rows = options.rows
-    this.term.resize(options.cols, options.rows)
+    this.recorder?.resize(options.cols, options.rows)
     this.pty.resize(options.cols, options.rows)
   }
 
   close(reason: string = 'session-closed'): void {
+    void this.closeAsync(reason).catch(() => {})
+  }
+
+  closeAsync(reason: string = 'session-closed'): Promise<void> {
+    if (!this.closePromise) {
+      this.closing = true
+      this.closePromise = Promise.resolve().then(() => this.recorder ? this.finishClose() : undefined)
+      clearTimeout(this.idleTimer)
+      // Close listeners may send a final message through attached subscribers.
+      // Notify every listener before clearing those subscribers or killing PTY.
+      const listeners = this.closeListeners.splice(0)
+      for (const fn of listeners) {
+        try { fn(reason) } catch {}
+      }
+      this.dataSubscribers.clear()
+      this.drainResolvers()
+      if (!this.dead || (this.recordingPty && this.outputState !== 'eof')) this.pty.kill()
+      if (!this.recorder) this.disposeSession()
+    }
+    return this.closePromise
+  }
+
+  private async finishClose(): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        this.completion,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('Session close did not finish within 5000ms')), 5000)
+        }),
+      ])
+    } catch (error) {
+      await this.recorder?.abort(`Session close incomplete: ${String(error)}`)
+      throw error
+    } finally {
+      clearTimeout(timer)
+      this.disposeSession()
+    }
+  }
+
+  private disposeSession(): void {
+    if (this.closed) return
     this.closed = true
-    clearTimeout(this.idleTimer)
-    // Notify close listeners BEFORE clearing subscribers, so they can still
-    // send final messages to attached WS clients through the data channel.
-    // Wrap each call so a throwing listener cannot abort the rest of close().
-    const listeners = this.closeListeners.splice(0)
-    for (const fn of listeners) {
-      try { fn(reason) } catch {}
-    }
-    // Clear all attach subscribers
-    this.dataSubscribers.clear()
-    // Drain all pending resolvers so no promises hang after close
+    this.disposePty()
+    if (this.outputState === 'open') this.outputState = 'incomplete'
     this.drainResolvers()
-    // Only kill the PTY if the process is still alive. killProcessGroup()
-    // handles SIGTERM → SIGKILL escalation internally.
-    if (!this.dead) {
-      this.pty.kill()
-    }
     this.term.destroy()
+    // Shutdown handlers may still write these files after kill() returns.
+    if (this.dead) this.cleanupArtifacts()
+    else this.onExit(() => this.cleanupArtifacts())
+  }
 
-    if (!this.generatedTermcastDbSuffix) {
-      return
-    }
+  private disposePty(): void {
+    if (this.ptyDisposed) return
+    this.ptyDisposed = true
+    this.recordingPty?.dispose()
+  }
 
-    const artifactPaths = getTermcastDbArtifactPaths({
+  private cleanupArtifacts(): void {
+    if (!this.generatedTermcastDbSuffix) return
+    for (const artifactPath of getTermcastDbArtifactPaths({
       cwd: this.sessionCwd,
       suffix: this.generatedTermcastDbSuffix,
-    })
-    artifactPaths.forEach((artifactPath) => {
-      try {
-        fs.rmSync(artifactPath, { force: true })
-      } catch {
-        // Best effort cleanup. Session close should never fail due to filesystem state.
-      }
-    })
+    })) {
+      try { fs.rmSync(artifactPath, { force: true }) } catch {}
+    }
   }
 }

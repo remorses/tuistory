@@ -13,7 +13,8 @@ import { z } from 'zod'
 import dedent from 'string-dedent'
 import pc from 'picocolors'
 import { isAgent } from 'std-env'
-import { Session, type Key, isValidKey, VALID_KEYS } from './session.js'
+import { Session, createSession, type Key, isValidKey, VALID_KEYS } from './session.js'
+import { DEFAULT_RECORDING_QUEUE_BYTES } from './recording.js'
 
 // Domain errors — errore tagged errors for typed error handling.
 // These replace throw/catch patterns with Error | T return types.
@@ -60,6 +61,8 @@ const VERSION = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8')).version as
 const DEFAULT_SCREENSHOT_PADDING_CELLS = 2
 const MONOSPACE_CELL_WIDTH_FACTOR = 0.6
 const SESSION_ID_BYTES = 10
+const RELAY_SHUTDOWN_TIMEOUT_MS = 5000
+const RELAY_FORCE_KILL_DELAY_MS = RELAY_SHUTDOWN_TIMEOUT_MS + 2000
 
 // Logger utility
 interface Logger {
@@ -115,6 +118,8 @@ interface LaunchOptions {
   cols: number
   rows: number
   cwd?: string
+  record?: string
+  recordMaxQueueBytes?: number
   env?: string[]
   attach?: boolean
   background?: boolean
@@ -190,6 +195,12 @@ function getLaunchCommandFromArgv(argv: string[]): string | null {
 }
 
 
+function nextRecordingPath(previous: string): string {
+  const parsed = path.parse(previous)
+  const name = parsed.name.replace(/\.tuistory-[a-f0-9]{16}$/, '')
+  return path.join(parsed.dir, `${name}.tuistory-${randomBytes(8).toString('hex')}${parsed.ext || '.cast'}`)
+}
+
 function shellQuote(value: string): string {
   if (/^[a-zA-Z0-9_./:-]+$/.test(value)) return value
   return `'${value.replaceAll(`'`, `'\\''`)}'`
@@ -223,6 +234,23 @@ function timeAgo(timestamp: number): string {
   if (hours < 24) return `${hours}h ago`
   const days = Math.floor(hours / 24)
   return `${days}d ago`
+}
+
+type PendingSession =
+  | { kind: 'launch'; intent: string; promise: Promise<Session> }
+  | { kind: 'lifecycle'; intent: 'close' | 'restart'; done: Promise<void> }
+const pendingSessions = new Map<string, PendingSession>()
+let shuttingDown = false
+
+function reserveLifecycle(name: string, intent: 'close' | 'restart'): () => void {
+  let release = () => {}
+  const done = new Promise<void>((resolve) => { release = resolve })
+  const reservation: PendingSession = { kind: 'lifecycle', intent, done }
+  pendingSessions.set(name, reservation)
+  return () => {
+    if (pendingSessions.get(name) === reservation) pendingSessions.delete(name)
+    release()
+  }
 }
 
 // Create CLI with commands - actions write to ctx
@@ -280,6 +308,8 @@ function createCliWithActions(
     .option('--cols <n>', z.number().default(120).describe('Terminal columns'))
     .option('--rows <n>', z.number().default(36).describe('Terminal rows'))
     .option('--cwd <path>', 'Working directory')
+    .option('--record <path>', 'Record output, resize, and markers to an asciicast v3 file')
+    .option('--record-max-queue-bytes <n>', z.number().optional().describe('Maximum recording queue including in-flight writes'))
     .option('--env <key=value>', z.array(z.string()).describe('Environment variable (repeatable)'))
     .option('--attach', z.boolean().optional().meta({ deprecated: true, description: 'Deprecated: attach is now automatic in TTY mode' }))
     .option('--background', 'Run in background without attaching (shows session info and how to interact)')
@@ -292,6 +322,12 @@ function createCliWithActions(
     runtime: { process: { cwd: string; env: Record<string, string | undefined> } }
   }) => {
     const launchCommand = command ?? (options['--'].length > 0 ? options['--'].join(' ') : null)
+    if (shuttingDown) { ctx.stderr = 'Relay is shutting down'; ctx.exitCode = 1; return }
+    if (!options.record && options.recordMaxQueueBytes !== undefined) {
+      ctx.stderr = '--record-max-queue-bytes requires --record'
+      ctx.exitCode = 1
+      return
+    }
     if (!launchCommand) {
       ctx.stderr = 'Error: missing command. Use `tuistory -- cmd` or `tuistory launch "cmd"`.'
       ctx.exitCode = 1
@@ -301,21 +337,34 @@ function createCliWithActions(
     const cwd = resolveCwd(options.cwd, runtime.process.cwd)
     const sessionName = options.session ?? getDefaultSessionName(launchCommand, cwd)
 
-    // Evict dead sessions older than 1 day to prevent unbounded memory growth.
-    // Runs opportunistically on each launch instead of a periodic timer.
-    const ONE_DAY_MS = 24 * 60 * 60 * 1000
-    for (const [name, s] of sessions) {
-      if (s.isDead && s.exitedAt && Date.now() - s.exitedAt > ONE_DAY_MS) {
-        s.close()
-        sessions.delete(name)
+    const recordPath = options.record ? path.resolve(runtime.process.cwd, options.record) : undefined
+    const intent = JSON.stringify([launchCommand, cwd, options.cols, options.rows, options.env, recordPath, options.recordMaxQueueBytes])
+    const pending = pendingSessions.get(sessionName)
+    if (pending) {
+      if (pending.kind !== 'launch' || pending.intent !== intent) {
+        ctx.stderr = `Session "${sessionName}" has an in-progress launch, restart, or close with different options`
+        ctx.exitCode = 1
+        return
       }
+      try {
+        await pending.promise
+        ctx.stdout = `Session "${sessionName}" started`
+      } catch (error) {
+        ctx.stderr = errorReason(error)
+        ctx.exitCode = 1
+      }
+      return
     }
-
     const existingSession = sessions.get(sessionName)
-    if (existingSession?.isDead) {
-      existingSession.close()
-      sessions.delete(sessionName)
-    } else if (existingSession) {
+    if (existingSession && !existingSession.isDead) {
+      const recorded = existingSession.recording?.status()
+      if (recordPath && (recorded?.path !== recordPath || recorded.maxQueuedBytes !== (options.recordMaxQueueBytes ?? DEFAULT_RECORDING_QUEUE_BYTES))) {
+        const activePath = recorded ? `Current recording: ${recorded.path}. ` : 'This session was launched without recording. '
+        ctx.stderr = `Session "${sessionName}" is already running with incompatible recording options. ${activePath}Reuse it with tuistory -s ${shellQuote(sessionName)} read, or repeat the launch without --record. To begin a new recording, close this session and choose a new --record path.`
+        ctx.exitCode = 1
+        return
+      }
+
       // Session is alive; return success so the client can attach to it.
       const q = shellQuote(sessionName)
       if (options.background) {
@@ -363,22 +412,48 @@ function createCliWithActions(
 
     // Let the shell handle command parsing — supports pipes, env vars, subshells, etc.
     const isWindows = os.platform() === 'win32'
-    const session = errore.try(() => new Session({
-      command: isWindows ? 'cmd.exe' : 'sh',
-      args: isWindows ? ['/c', launchCommand] : ['-c', launchCommand],
-      cols: options.cols,
-      rows: options.rows,
-      cwd,
-      env,
-      label: launchCommand,
-    }))
+    const promise = Promise.resolve().then(async () => {
+      // Evict dead sessions older than 1 day to prevent unbounded memory growth.
+      // Runs opportunistically on each launch instead of a periodic timer.
+      const ONE_DAY_MS = 24 * 60 * 60 * 1000
+      for (const [name, stale] of sessions) {
+        if (stale.isDead && stale.exitedAt && Date.now() - stale.exitedAt > ONE_DAY_MS) {
+          try { await stale.closeAsync() } catch (error) { void logger.error(errorReason(error)) }
+          finally { if (sessions.get(name) === stale) sessions.delete(name) }
+        }
+      }
+      if (existingSession) {
+        try { await existingSession.closeAsync() } catch (error) { void logger.error(errorReason(error)) }
+        finally { if (sessions.get(sessionName) === existingSession) sessions.delete(sessionName) }
+        const previous = existingSession.recording?.status()
+        if (previous?.kind === 'partial') ctx.stderr = `Previous recording partial: ${previous.partialPath} (${previous.reason})`
+      }
+      const session = await createSession({
+        command: isWindows ? 'cmd.exe' : 'sh',
+        args: isWindows ? ['/c', launchCommand] : ['-c', launchCommand],
+        cols: options.cols,
+        rows: options.rows,
+        cwd,
+        env,
+        label: launchCommand,
+        record: recordPath ? { path: recordPath, maxQueuedBytes: options.recordMaxQueueBytes } : undefined,
+      }, () => !shuttingDown)
+      sessions.set(sessionName, session)
+      return session
+    })
+    const reservation: PendingSession = { kind: 'launch', intent, promise }
+    pendingSessions.set(sessionName, reservation)
+    const session = await errore.tryAsync({
+      try: () => promise,
+      catch: (error) => new Error(errorReason(error)),
+    })
+    if (pendingSessions.get(sessionName) === reservation) pendingSessions.delete(sessionName)
+
     if (session instanceof Error) {
       ctx.stderr = new SessionCommandError({ operation: 'launch', session: sessionName, reason: errorReason(session), cause: session }).message
       ctx.exitCode = 1
       return
     }
-
-    sessions.set(sessionName, session)
 
     // Log when PTY process exits so daemon operators can see what happened.
     // Don't auto-remove — the user may still want to read the last snapshot.
@@ -1217,6 +1292,57 @@ function createCliWithActions(
       ctx.stdout = JSON.stringify(frames)
     })
 
+  cli.command('record mark <label>', 'Add a marker to the session recording')
+    .option('-s, --session <name>', 'Session name (required)')
+    .action((label: string, options: { session?: string }) => {
+      const name = requireSession(options)
+      if (!name) return
+      const session = getSession(name)
+      if (!session) return
+      if (!session.recording) { ctx.stderr = 'Session has no recording'; ctx.exitCode = 1; return }
+      try {
+        session.recording.mark(label)
+        const status = session.recording.status()
+        if (status.kind === 'partial') throw new Error(status.reason)
+        ctx.stdout = 'Recording marker added'
+      } catch (error) { ctx.stderr = errorReason(error); ctx.exitCode = 1 }
+    })
+
+  cli.command('record status', 'Show the session recording status')
+    .option('-s, --session <name>', 'Session name (required)')
+    .option('--json', 'Output as JSON')
+    .action((options: { session?: string; json?: boolean }) => {
+      const name = requireSession(options)
+      if (!name) return
+      const session = getSession(name)
+      if (!session) return
+      if (!session.recording) { ctx.stderr = 'Session has no recording'; ctx.exitCode = 1; return }
+      const status = session.recording.status()
+      ctx.stdout = options.json ? JSON.stringify(status) : `${status.kind}: ${status.kind === 'partial' ? status.partialPath + ' (' + status.reason + ')' : status.path}`
+    })
+
+  cli.command('record stop', 'Save the recording interval and keep the process running')
+    .option('-s, --session <name>', 'Session name (required)')
+    .action(async (options: { session?: string }) => {
+      const name = requireSession(options)
+      if (!name) return
+      const session = getSession(name)
+      if (!session) return
+      if (!session.recording) { ctx.stderr = 'Session has no recording'; ctx.exitCode = 1; return }
+      const status = await session.recording.stop()
+      ctx.stdout = JSON.stringify(status)
+      if (status.kind === 'partial') { ctx.stderr = status.reason; ctx.exitCode = 1 }
+    })
+
+  cli.command('export <cast>', 'Export an asciicast v3 recording to MP4 without a daemon')
+    .option('-o, --output <path>', 'Destination MP4 (required)')
+    .option('--fps <n>', z.number().optional().describe('Frames per second (default 30)'))
+    .option('--speed <n>', z.number().optional().describe('Playback speed (default 1)'))
+    .option('--idle-limit <seconds>', z.number().optional().describe('Maximum idle gap'))
+    .option('--from <seconds>', z.number().optional().describe('Source start time'))
+    .option('--to <seconds>', z.number().optional().describe('Source end time'))
+    .action(() => { ctx.stderr = 'Export must run in the calling process'; ctx.exitCode = 1 })
+
   cli
     .command('close', dedent`
       Close a terminal session and kill its process.
@@ -1237,15 +1363,26 @@ function createCliWithActions(
         return
       }
 
-      const closed = errore.try(() => session.close())
-      if (closed instanceof Error) {
-        ctx.stderr = new SessionCommandError({ operation: 'close', session: sessionName, reason: closed.message, cause: closed }).message
+      if (pendingSessions.has(sessionName)) {
+        ctx.stderr = `Session "${sessionName}" is already starting, restarting, or closing`
         ctx.exitCode = 1
         return
       }
-      sessions.delete(sessionName)
-      ctx.stdout = `Session "${sessionName}" closed`
-      void logger.log(`Session "${sessionName}" closed`)
+      const release = reserveLifecycle(sessionName, 'close')
+      try {
+        const closed = await errore.tryAsync({ try: () => session.closeAsync(), catch: (error) => new Error(errorReason(error)) })
+        const recording = session.recording?.status()
+        if (closed instanceof Error || recording?.kind === 'partial') {
+          ctx.stderr = closed instanceof Error ? closed.message : recording?.kind === 'partial' ? recording.reason : ''
+          if (recording?.kind === 'partial') ctx.stderr += ` (${recording.partialPath})`
+          ctx.exitCode = 1
+        }
+        ctx.stdout = `Session "${sessionName}" closed`
+        void logger.log(`Session "${sessionName}" closed`)
+      } finally {
+        if (sessions.get(sessionName) === session) sessions.delete(sessionName)
+        release()
+      }
     })
 
   cli
@@ -1275,86 +1412,106 @@ function createCliWithActions(
     }) => {
       const sessionName = requireSession(options)
       if (!sessionName) return
+      if (shuttingDown) { ctx.stderr = 'Relay is shutting down'; ctx.exitCode = 1; return }
 
       const session = getSession(sessionName)
       if (!session) return
 
-      // Store original launch parameters before closing
-      const command = session.currentCommand
-      const cwd = session.currentCwd
-      const cols = session.currentCols
-      const rows = session.currentRows
-      const env = session.currentEnv
-
-      // Graceful shutdown: SIGINT first, then SIGTERM if needed
-      if (!session.isDead) {
-        // Write Ctrl+C to the PTY (SIGINT to foreground process group)
-        const interrupt = errore.try(() => session.writeRaw('\x03'))
-        if (interrupt instanceof Error) await logger.error(`Failed to interrupt session "${sessionName}": ${interrupt.message}`)
-        const exited = await session.waitForExit(options.timeout)
-
-        if (!exited) {
-          // Escalate to SIGTERM
-          session.killProcess()
-          await session.waitForExit(2000)
-        }
-      }
-
-      // Clean up old session. Guard against concurrent restart: only delete
-      // if the map still points to the session we captured, not a newer one.
-      const closed = errore.try(() => session.close('session-restarting'))
-      if (closed instanceof Error) await logger.error(`Failed to close session "${sessionName}" before restart: ${closed.message}`)
-      if (sessions.get(sessionName) === session) {
-        sessions.delete(sessionName)
-      }
-
-      // Relaunch with same parameters
-      const isWindows = os.platform() === 'win32'
-      const newSession = errore.try(() => new Session({
-        command: isWindows ? 'cmd.exe' : 'sh',
-        args: isWindows ? ['/c', command] : ['-c', command],
-        cols,
-        rows,
-        cwd,
-        env: { ...env, TUISTORY_SESSION: sessionName },
-        label: command,
-      }))
-      if (newSession instanceof Error) {
-        ctx.stderr = new SessionCommandError({ operation: 'restart', session: sessionName, reason: errorReason(newSession), cause: newSession }).message
+      if (pendingSessions.has(sessionName)) {
+        ctx.stderr = `Session "${sessionName}" is already starting or restarting`
         ctx.exitCode = 1
         return
       }
+      const release = reserveLifecycle(sessionName, 'restart')
+      try {
+        // Store original launch parameters before closing
+        const command = session.currentCommand
+        const cwd = session.currentCwd
+        const cols = session.currentCols
+        const rows = session.currentRows
+        const env = session.currentEnv
 
-      sessions.set(sessionName, newSession)
+        // Graceful shutdown: SIGINT first, then SIGTERM if needed
+        if (!session.isDead) {
+          // Write Ctrl+C to the PTY (SIGINT to foreground process group)
+          const interrupt = errore.try(() => session.writeRaw('\x03'))
+          if (interrupt instanceof Error) await logger.error(`Failed to interrupt session "${sessionName}": ${interrupt.message}`)
+          const exited = await session.waitForExit(options.timeout)
 
-      newSession.onExit((info) => {
-        void logger.log(`Session "${sessionName}" PTY exited (code: ${info.exitCode}, signal: ${info.signal})`)
-      })
-
-      if (!options.noWait) {
-        const waited = await errore.tryAsync({
-          try: () => newSession.waitForData({ timeout: 5000 }),
-          catch: (e) => new SessionCommandError({ operation: 'restart', session: sessionName, reason: errorReason(e), cause: e }),
-        })
-        // If waitForData timed out but the process is still alive, treat
-        // restart as successful. Silent processes (e.g. sleep) produce no
-        // initial output, so timing out is expected, not an error.
-        if (waited instanceof Error) {
-          if (newSession.isDead) {
-            ctx.stderr = waited.message
-            ctx.exitCode = 1
-            return
+          if (!exited) {
+            // Escalate to SIGTERM
+            session.killProcess()
+            await session.waitForExit(2000)
           }
-          ctx.stderr = dedent`
-            Session "${sessionName}" restarted, but produced no output within 5000ms.
-            The process is still running in the background.
-            If the command is expected to be silent at startup, pass --no-wait to skip this check.
-          `
         }
-      }
 
-      ctx.stdout = `Session "${sessionName}" restarted`
-      void logger.log(`Session "${sessionName}" restarted: ${command}`)
+        // Clean up old session. Guard against concurrent restart: only delete
+        // if the map still points to the session we captured, not a newer one.
+        const closed = await errore.tryAsync({ try: () => session.closeAsync('session-restarting'), catch: (error) => new Error(errorReason(error)) })
+        if (closed instanceof Error) await logger.error(`Failed to close session "${sessionName}" before restart: ${closed.message}`)
+        const previous = session.recording?.status()
+        if (previous?.kind === 'partial') ctx.stderr = `Previous recording partial: ${previous.partialPath} (${previous.reason})`
+        if (sessions.get(sessionName) === session) {
+          sessions.delete(sessionName)
+        }
+
+        if (shuttingDown) {
+          ctx.stderr = 'Restart canceled because the relay is shutting down'
+          ctx.exitCode = 1
+          return
+        }
+
+        // Relaunch with same parameters
+        const isWindows = os.platform() === 'win32'
+        const newSession = await errore.tryAsync({ try: () => createSession({
+          command: isWindows ? 'cmd.exe' : 'sh',
+          args: isWindows ? ['/c', command] : ['-c', command],
+          cols,
+          rows,
+          cwd,
+          env: { ...env, TUISTORY_SESSION: sessionName },
+          label: command,
+          record: session.recording ? { path: nextRecordingPath(session.recording.status().path), maxQueuedBytes: session.recording.status().maxQueuedBytes } : undefined,
+        }, () => !shuttingDown), catch: (error) => new Error(errorReason(error)) })
+        if (newSession instanceof Error) {
+          ctx.stderr = new SessionCommandError({ operation: 'restart', session: sessionName, reason: errorReason(newSession), cause: newSession }).message
+          ctx.exitCode = 1
+          return
+        }
+
+        sessions.set(sessionName, newSession)
+
+        newSession.onExit((info) => {
+          void logger.log(`Session "${sessionName}" PTY exited (code: ${info.exitCode}, signal: ${info.signal})`)
+        })
+
+        if (!options.noWait) {
+          const waited = await errore.tryAsync({
+            try: () => newSession.waitForData({ timeout: 5000 }),
+            catch: (e) => new SessionCommandError({ operation: 'restart', session: sessionName, reason: errorReason(e), cause: e }),
+          })
+          // If waitForData timed out but the process is still alive, treat
+          // restart as successful. Silent processes (e.g. sleep) produce no
+          // initial output, so timing out is expected, not an error.
+          if (waited instanceof Error) {
+            if (newSession.isDead) {
+              ctx.stderr = waited.message
+              ctx.exitCode = 1
+              return
+            }
+            ctx.stderr = dedent`
+              Session "${sessionName}" restarted, but produced no output within 5000ms.
+              The process is still running in the background.
+              If the command is expected to be silent at startup, pass --no-wait to skip this check.
+            `
+          }
+        }
+
+        ctx.stdout = `Session "${sessionName}" restarted`
+        void logger.log(`Session "${sessionName}" restarted: ${command}`)
+      } finally {
+        release()
+      }
     })
 
   cli
@@ -1611,16 +1768,13 @@ function unlinkPidFileIfOwned(): void {
   }
 }
 
-// Send SIGTERM to a PID, wait up to 3s, escalate to SIGKILL if needed.
 // Returns true if the process exited, false if it couldn't be killed.
 async function killProcessByPid(pid: number): Promise<boolean> {
   const sendResult = errore.try(() => process.kill(pid, 'SIGTERM'))
   if (sendResult instanceof Error) return true // Process doesn't exist (stale PID)
 
-  // Wait for process to exit (up to 5s — graceful shutdown closes sessions +
-  // HTTP server which can take a few seconds with many active sessions)
   const start = Date.now()
-  while (Date.now() - start < 5000) {
+  while (Date.now() - start < RELAY_FORCE_KILL_DELAY_MS) {
     const alive = errore.try(() => process.kill(pid, 0))
     if (alive instanceof Error) return true // Process exited
     await new Promise((r) => setTimeout(r, 100))
@@ -1916,6 +2070,7 @@ async function startRelayServer() {
   }))
 
   app.post('/cli', async (c) => {
+    if (shuttingDown) return c.json({ stdout: '', stderr: 'Relay is shutting down', exitCode: 1 }, 503)
     const { argv, cwd, env: callerEnv } = await c.req.json()
 
     const ctx: CommandResult = { stdout: '', stderr: '', exitCode: 0 }
@@ -2000,20 +2155,33 @@ async function startRelayServer() {
   server.listen(RELAY_PORT, '127.0.0.1')
 
   const gracefulShutdown = async (signal: string) => {
-    await logger.log(`Relay server shutting down (${signal})`)
-    for (const [name, session] of sessions) {
-      const closed = errore.try(() => session.close('daemon-shutdown'))
-      if (closed instanceof Error) await logger.error(`Failed to close session "${name}" on shutdown: ${closed.message}`)
-      await logger.log(`Session "${name}" closed on shutdown`)
-    }
+    if (shuttingDown) return
+    shuttingDown = true
+    const closing = Array.from(sessions, ([name, session]) => {
+      const close = session.closeAsync('daemon-shutdown')
+      return close.catch(async (error) => { await logger.error(`Failed to close session "${name}" on shutdown: ${errorReason(error)}`) }).then(async () => {
+        const recording = session.recording?.status()
+        if (recording?.kind === 'partial') await logger.error(`Recording partial: ${recording.partialPath} (${recording.reason})`)
+        await logger.log(`Session "${name}" closed on shutdown`)
+      })
+    })
+    const pending = Array.from(pendingSessions.values(), (entry) => entry.kind === 'launch' ? entry.promise : entry.done)
+    void logger.log(`Relay server shutting down (${signal})`)
+    let shutdownTimer: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([
+      Promise.allSettled([...closing, ...pending]),
+      new Promise<void>((resolve) => { shutdownTimer = setTimeout(resolve, RELAY_SHUTDOWN_TIMEOUT_MS) }),
+    ])
+    clearTimeout(shutdownTimer)
     sessions.clear()
-    // Only remove the PID file if it still records us — never delete a newer
+    // Only remove the PID file if it still records us. Never delete a newer
     // daemon's PID file if one already took over the port.
     unlinkPidFileIfOwned()
-    // Close the HTTP server first so no new requests are accepted,
-    // then flush the logger, then exit.
-    await new Promise<void>((resolve) => server.close(() => resolve()))
-    // Give the logger queue a chance to flush final writes
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 500)
+      server.close(() => { clearTimeout(timer); resolve() })
+      if ('closeAllConnections' in server && typeof server.closeAllConnections === 'function') server.closeAllConnections()
+    })
     await logger.log('Shutdown complete')
     process.exit(0)
   }
@@ -2293,6 +2461,33 @@ async function runCliClient() {
     return
   }
 
+  if (inspectCli.matchedCommandName === 'export') {
+    const inputPath = inspectCli.args[0]
+    const options = inspectCli.options
+    if (typeof inputPath !== 'string' || typeof options.output !== 'string') {
+      console.error('Export requires a recording path and -o <output.mp4>')
+      process.exitCode = 1
+      return
+    }
+    try {
+      const { exportRecording } = await import('./recording.js')
+      const result = await exportRecording({
+        inputPath,
+        outputPath: options.output,
+        fps: options.fps,
+        speed: options.speed,
+        idleLimit: options.idleLimit,
+        from: options.from,
+        to: options.to,
+      })
+      console.log(JSON.stringify(result))
+    } catch (error) {
+      console.error(errorReason(error))
+      process.exitCode = 1
+    }
+    return
+  }
+
   const passthroughCommand = Array.isArray(inspectCli.options['--']) && inspectCli.options['--'].length > 0
     ? inspectCli.options['--'].join(' ')
     : null
@@ -2319,6 +2514,11 @@ async function runCliClient() {
   // to avoid orphaning grandchildren (dev servers, background jobs, etc.).
   const shouldPassthrough = !!(process.env.TRAFORO_URL || process.env.SIGILLO || process.env.TUISTORY_SESSION)
   if (isLaunchCommand && shouldPassthrough && launchCommand) {
+    if (inspectCli.options.record) {
+      console.error('Recording is unavailable for nested passthrough launches')
+      process.exitCode = 1
+      return
+    }
     const cwd = resolveCwd(inspectCli.options.cwd, process.cwd())
     const env = {
       ...process.env,
